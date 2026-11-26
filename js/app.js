@@ -259,7 +259,11 @@ function ecraPendente() {
       : `<div class="alert info">Olá, ${esc(p.nome)}. O seu pedido de acesso como <b>${p.papel === 'pediatra' ? 'pediatra' : 'MGF'}</b> aguarda aprovação de um administrador. Receberá acesso assim que for aprovado.</div>`}
     <div class="actions"><button class="btn secondary" id="rec">Verificar novamente</button><button class="btn secondary" id="out">Sair</button></div>
   </div></div>`;
-  $('#rec').onclick = () => arrancar();
+  $('#rec').onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = 'A verificar…';
+    await arrancar();
+    if (!st.perfil?.aprovado || !st.perfil?.ativo) toast('Ainda sem aprovação (' + new Date().toLocaleTimeString('pt-PT') + ').', true);
+  };
   $('#out').onclick = () => sb.auth.signOut();
 }
 
