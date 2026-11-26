@@ -254,7 +254,7 @@ function ecraNovaPassword() {
 function ecraPendente() {
   const p = st.perfil;
   app.innerHTML = `<div class="auth"><div class="card"><div class="logo"><img src="icons/logo.svg" alt=""><b>PedLink</b></div>
-    ${!p ? `<div class="alert err">Não foi encontrado o seu perfil. Contacte o administrador do projeto.</div>`
+    ${!p ? `<div class="alert err">Não foi encontrado o seu perfil. Contacte o administrador do projeto.${st.perfilErro ? `<br><span class="small">Detalhe técnico: ${esc(st.perfilErro)}</span>` : ''}</div>`
       : !p.ativo ? `<div class="alert err">A sua conta foi desativada. Contacte o administrador do projeto.</div>`
       : `<div class="alert info">Olá, ${esc(p.nome)}. O seu pedido de acesso como <b>${p.papel === 'pediatra' ? 'pediatra' : 'MGF'}</b> aguarda aprovação de um administrador. Receberá acesso assim que for aprovado.</div>`}
     <div class="actions"><button class="btn secondary" id="rec">Verificar novamente</button><button class="btn secondary" id="out">Sair</button></div>
@@ -940,7 +940,8 @@ async function arrancar() {
   await carregarUnidades();
   if (recuperacao || location.hash.startsWith('#/nova-password')) { if (session) return ecraNovaPassword(); }
   if (!session) { st.perfil = null; return ecraAuth(); }
-  try { await carregarPerfil(); } catch (e) { st.perfil = null; }
+  st.perfilErro = null;
+  try { await carregarPerfil(); } catch (e) { st.perfil = null; st.perfilErro = e?.message || String(e); console.error(e); }
   if (!st.perfil || !st.perfil.aprovado || !st.perfil.ativo) return ecraPendente();
   shell();
   route();

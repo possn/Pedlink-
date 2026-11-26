@@ -601,6 +601,20 @@ create policy pedlink_docs_admin_del on storage.objects for delete to authentica
 );
 
 -- ---------------------------------------------------------------------
+-- 11b. Permissões da API (RLS continua a filtrar as linhas)
+-- ---------------------------------------------------------------------
+grant usage on schema public to anon, authenticated;
+grant select on public.aces, public.unidades to anon;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+grant execute on function public.email_permitido(text) to anon, authenticated;
+grant usage on schema private to anon, authenticated;
+grant execute on all functions in schema private to anon, authenticated;
+alter default privileges in schema public grant select, insert, update, delete on tables to authenticated;
+alter default privileges in schema public grant usage, select on sequences to authenticated;
+notify pgrst, 'reload schema';
+
+-- ---------------------------------------------------------------------
 -- 12. Dados iniciais (editáveis no painel de administração)
 -- ---------------------------------------------------------------------
 insert into public.conteudos (chave, titulo, corpo) values
