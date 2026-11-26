@@ -1,5 +1,5 @@
 // Service worker: guarda só a "casca" da app. Dados clínicos nunca são guardados em cache.
-const CACHE = 'pedlink-v15';
+const CACHE = 'pedlink-v16';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/config.js',
   'manifest.webmanifest', 'icons/logo.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
