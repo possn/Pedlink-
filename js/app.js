@@ -113,35 +113,43 @@ function juntarDitado(antes, txt) {
   if (!antes || /[.!?\n]\s*$/.test(antes)) txt = txt.charAt(0).toUpperCase() + txt.slice(1);
   return antes + sep + txt;
 }
+// Um único motor de reconhecimento para toda a app: o Safari iOS só aceita um ativo de cada vez
+// e, se se cria outro antes de o anterior libertar o microfone, o segundo fica mudo.
+let motor = null, motorAtivo = false, motorSessao = 0;
+function uiDitado(d, estado) {
+  d.btn.classList.toggle('on', estado !== 'off'); d.btn.classList.toggle('ouvir', estado === 'ouvir');
+  d.btn.querySelector('span').textContent = estado === 'off' ? 'Ditar' : estado === 'ouvir' ? 'A ouvir… Parar' : 'Parar';
+}
 function pararDitado(aviso) {
   if (!ditado) return;
   const d = ditado; ditado = null;
   clearTimeout(d.timer);
-  try { d.rec && d.rec.stop(); } catch { /* ignore */ }
-  d.btn.classList.remove('on', 'ouvir'); d.btn.querySelector('span').textContent = 'Ditar';
+  if (motor && motorAtivo) { try { motor.abort(); } catch { /* ignore */ } }
+  uiDitado(d, 'off');
   if (aviso) toast(aviso, true);
 }
 const AVISO_TECLADO = IOS
   ? 'O ditado não respondeu. No iPhone use o microfone 🎤 do teclado: toque no campo e depois no 🎤 junto à barra de espaço.'
   : 'O ditado não respondeu. Verifique a permissão do microfone ou escreva o texto.';
-function sessaoDitado(d) {
-  const rec = new SR();
-  rec.lang = 'pt-PT';
-  rec.continuous = !IOS;      // Safari iOS é instável em modo contínuo: frases curtas com reinício automático
-  rec.interimResults = true;  // Safari iOS por vezes só entrega resultados intermédios
-  d.rec = rec; d.base = d.alvo.value;
-  const max = d.alvo.maxLength > 0 ? d.alvo.maxLength : undefined;
-  rec.onaudiostart = () => { if (ditado === d) { d.btn.classList.add('ouvir'); d.btn.querySelector('span').textContent = 'A ouvir… Parar'; } };
-  rec.onresult = (ev) => {
-    if (ditado !== d) return;
+function obterMotor() {
+  if (motor) return motor;
+  motor = new SR();
+  motor.lang = 'pt-PT';
+  motor.continuous = !IOS;      // Safari iOS é instável em modo contínuo: frases curtas com reinício automático
+  motor.interimResults = true;  // Safari iOS por vezes só entrega resultados intermédios
+  motor.onaudiostart = () => { if (ditado) uiDitado(ditado, 'ouvir'); };
+  motor.onresult = (ev) => {
+    const d = ditado;
+    if (!d || d.sessao !== motorSessao) return;
     d.ouviu = true; clearTimeout(d.timer);
     let txt = '';
     for (let i = 0; i < ev.results.length; i++) txt += ev.results[i][0].transcript + ' ';
-    d.alvo.value = juntarDitado(d.base, txt).slice(0, max);
+    d.alvo.value = juntarDitado(d.base, txt).slice(0, d.alvo.maxLength > 0 ? d.alvo.maxLength : undefined);
     d.alvo.dispatchEvent(new Event('input', { bubbles: true }));
   };
-  rec.onerror = (ev) => {
-    if (ditado !== d) return;
+  motor.onerror = (ev) => {
+    const d = ditado;
+    if (!d || d.sessao !== motorSessao) return;
     if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
       pararDitado(IOS && (navigator.standalone || matchMedia('(display-mode: standalone)').matches)
         ? 'O ditado da app não funciona na app do ecrã principal do iPhone. Use o microfone 🎤 do teclado, ou abra o PedLink no Safari.'
@@ -150,27 +158,39 @@ function sessaoDitado(d) {
       pararDitado('Ditado interrompido (' + ev.error + '). ' + (IOS ? 'Pode usar o 🎤 do teclado.' : ''));
     }
   };
-  rec.onend = () => {
-    if (ditado !== d) return;
-    // fixa o texto reconhecido e, se não carregou em Parar, continua a ouvir
-    d.base = d.alvo.value;
-    if (!d.ouviu && Date.now() - d.inicio > 9000) return pararDitado(AVISO_TECLADO);
-    setTimeout(() => { if (ditado === d) { try { sessaoDitado(d); } catch { pararDitado(AVISO_TECLADO); } } }, 150);
+  motor.onend = () => {
+    motorAtivo = false;
+    const d = ditado;
+    if (!d) return;
+    if (d.sessao === motorSessao && !d.ouviu && Date.now() - d.inicio > 9000) return pararDitado(AVISO_TECLADO);
+    setTimeout(arrancarMotor, 150); // continua a ouvir (ou arranca no campo novo) até carregar em Parar
   };
-  rec.start();
+  return motor;
+}
+function arrancarMotor() {
+  const d = ditado;
+  if (!d || motorAtivo) return;
+  d.base = d.alvo.value; d.sessao = ++motorSessao;
+  motorAtivo = true;
+  try { obterMotor().start(); }
+  catch { motorAtivo = false; pararDitado('Não foi possível iniciar o ditado. ' + (IOS ? 'Use o 🎤 do teclado.' : '')); }
 }
 function ligarDitado(root) {
   if (!SR) return;
   $$('[data-ditar]', root).forEach(btn => btn.onclick = () => {
     const alvo = document.getElementById(btn.dataset.ditar);
     if (ditado && ditado.btn === btn) return pararDitado();
-    pararDitado();
+    if (ditado) { clearTimeout(ditado.timer); uiDitado(ditado, 'off'); }
     alvo.blur(); // no iPhone o teclado aberto compete pelo microfone
-    const d = { alvo, btn, ouviu: false, inicio: Date.now() };
+    const d = { alvo, btn, ouviu: false, inicio: Date.now(), sessao: -1 };
     ditado = d;
-    btn.classList.add('on'); btn.querySelector('span').textContent = 'Parar';
+    uiDitado(d, 'on');
     d.timer = setTimeout(() => { if (ditado === d && !d.ouviu) pararDitado(AVISO_TECLADO); }, 10000);
-    try { sessaoDitado(d); } catch { pararDitado('Não foi possível iniciar o ditado. ' + (IOS ? 'Use o 🎤 do teclado.' : '')); }
+    if (motorAtivo) {
+      // muda de campo: liberta o motor e só depois volta a arrancar (no onend); salvaguarda se o onend não vier
+      try { motor.abort(); } catch { /* ignore */ }
+      setTimeout(() => { if (ditado === d && d.sessao === -1) { motorAtivo = false; arrancarMotor(); } }, 900);
+    } else arrancarMotor();
   });
 }
 
