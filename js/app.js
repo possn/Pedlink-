@@ -427,7 +427,7 @@ function shell() {
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
         <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 13</div></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 14</div></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
@@ -507,9 +507,10 @@ async function vistaCasos(v) {
       <div class="stat"><b>${casos.filter(c => c.reuniao_em && new Date(c.reuniao_em) > new Date()).length}</b><span>Reuniões agendadas</span></div>
     </div>`;
 
-  const acesOpts = `<option value="">Todos os ACES</option>` + st.aces.map(a => `<option value="${a.id}" ${filtros.aces === a.id ? 'selected' : ''}>${esc(a.nome)}</option>`).join('');
-  const unidOpts = `<option value="">Todas as unidades</option>` + st.unidades.filter(u => !filtros.aces || u.aces_id === filtros.aces)
-    .map(u => `<option value="${u.id}" ${filtros.unidade === u.id ? 'selected' : ''}>${esc(unidadeTxt(u))}</option>`).join('');
+  const unidFiltro = st.unidades.filter(u => u.tipo !== 'Hospital' && (u.ativo || u.id === filtros.unidade));
+  const acesOpts = `<option value="">Todos os ACES</option>` + st.aces.filter(a => a.id === filtros.aces || unidFiltro.some(u => u.aces_id === a.id)).map(a => `<option value="${a.id}" ${filtros.aces === a.id ? 'selected' : ''}>${esc(a.nome)}</option>`).join('');
+  const unidOpts = `<option value="">Todas as unidades</option>` + unidFiltro.filter(u => !filtros.aces || u.aces_id === filtros.aces)
+    .map(u => `<option value="${u.id}" ${filtros.unidade === u.id ? 'selected' : ''}>${esc(u.nome)}</option>`).join('');
 
   v.innerHTML = `
     <div class="row" style="align-items:center;margin-bottom:12px"><h1 style="margin:0">Casos</h1>
