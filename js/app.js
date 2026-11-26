@@ -264,12 +264,19 @@ function ecraPendente() {
     await arrancar();
     if (!st.perfil?.aprovado || !st.perfil?.ativo) toast('Ainda sem aprovação (' + new Date().toLocaleTimeString('pt-PT') + ').', true);
   };
-  $('#out').onclick = () => sb.auth.signOut();
+  $('#out').onclick = () => sair();
 }
 
 // ---------------------------------------------------------------------------
 // Estrutura principal (menu lateral)
 // ---------------------------------------------------------------------------
+async function sair() {
+  try { await sb.auth.signOut({ scope: 'local' }); } catch { /* ignore */ }
+  st.session = null; st.perfil = null;
+  history.replaceState(null, '', location.pathname);
+  ecraAuth('entrar', 'Sessão terminada. Outra pessoa pode agora entrar ou criar conta.');
+}
+
 function shell() {
   const p = st.perfil;
   app.innerHTML = `
@@ -285,9 +292,9 @@ function shell() {
         ${isAdmin() ? `<a href="#/admin" data-r="admin">${icon('admin')} Administração</a>` : ''}
         <div class="sep"></div>
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
+        <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span>
-        <div style="margin-top:8px"><button class="linkbtn" id="sair">Sair</button></div></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
@@ -295,7 +302,7 @@ function shell() {
       <main class="main" id="view"></main>
     </div>
   </div>`;
-  $('#sair').onclick = () => sb.auth.signOut();
+  $('#sairNav').onclick = (e) => { e.preventDefault(); sair(); };
   $('#menuBtn').onclick = () => $('#shell').classList.add('open');
   $('#scrim').onclick = () => $('#shell').classList.remove('open');
   atualizarContador();
@@ -780,6 +787,8 @@ async function vistaPerfil(v) {
     <form class="card" id="fpw"><h2>Alterar palavra-passe</h2>
       <div class="field"><label for="pwN">Nova palavra-passe</label><input id="pwN" type="password" minlength="8" required autocomplete="new-password"></div>
       <button class="btn secondary">Alterar</button></form>
+    <section class="card"><h2>Sessão</h2><p class="muted small">Termine a sessão para outra pessoa poder usar este dispositivo.</p>
+      <button class="btn danger" id="pfSair">${icon('sair')} Sair da conta</button></section>
     <section class="card"><h2>Aspeto</h2><div class="seg" id="tema">
       ${[['', 'Automático'], ['light', 'Claro'], ['dark', 'Escuro']].map(([k, t]) => `<label><input type="radio" name="tema" value="${k}" ${(localStorageGet('tema') || '') === k ? 'checked' : ''}> ${t}</label>`).join('')}</div></section>`;
   $('#fpf').onsubmit = async (e) => {
@@ -796,6 +805,7 @@ async function vistaPerfil(v) {
     if (error) return toast(erroMsg(error), true);
     e.target.reset(); toast('Palavra-passe alterada.');
   };
+  $('#pfSair').onclick = () => sair();
   $$('input[name=tema]').forEach(r => r.onchange = () => { localStorageSet('tema', r.value); aplicarTema(); });
 }
 
@@ -954,7 +964,7 @@ async function arrancar() {
 sb.auth.onAuthStateChange((evt, session) => {
   if (evt === 'PASSWORD_RECOVERY') { recuperacao = true; st.session = session; ecraNovaPassword(); return; }
   if (evt === 'SIGNED_IN' && (!st.session || st.session.user.id !== session?.user.id)) { st.session = session; setTimeout(arrancar, 0); }
-  if (evt === 'SIGNED_OUT') { st.session = null; st.perfil = null; ecraAuth(); }
+  if (evt === 'SIGNED_OUT' && st.perfil) { st.session = null; st.perfil = null; ecraAuth(); }
 });
 window.addEventListener('hashchange', () => { if (st.perfil && !location.hash.startsWith('#/nova-password')) route(); });
 setInterval(() => { if (document.visibilityState === 'visible') atualizarContador(); }, 60000);
