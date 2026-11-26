@@ -14,6 +14,15 @@ const ESTADOS = {
 };
 const PRIORIDADES = { urgente: 'Urgente', prioritario: 'Prioritário', normal: 'Normal' };
 const PRIO_ORDEM = { urgente: 0, prioritario: 1, normal: 2 };
+// Prazo da 1.ª resposta da pediatria (horas) — igual a private.prazo_horas() na base de dados
+const PRAZO_H = { urgente: 48, prioritario: 168, normal: 720 };
+const PRAZO_TXT = { urgente: '48 horas', prioritario: '7 dias', normal: '30 dias' };
+function prazoCaso(c) {
+  const limite = new Date(new Date(c.created_at).getTime() + PRAZO_H[c.prioridade] * 3600000);
+  const pendente = !c.primeira_resposta_em && c.estado !== 'fechado';
+  const atraso = pendente ? (Date.now() - limite) / 3600000 : 0;
+  return { limite, pendente, atrasado: pendente && atraso > 0, atrasoTxt: atraso >= 48 ? Math.floor(atraso / 24) + ' dias' : Math.max(1, Math.round(atraso)) + ' h' };
+}
 const DESFECHOS = {
   referenciar: 'Referenciar à consulta hospitalar',
   nao_referenciar: 'Não referenciar',
@@ -50,6 +59,8 @@ function icon(name) {
     sair: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>',
     voltar: '<path d="M15 6l-6 6 6 6"/>',
     mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+    escudo: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+    cal: '<rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
     cadeado: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   }[name] || '';
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
@@ -341,6 +352,7 @@ function ecraAuth(modo = 'entrar', aviso = '') {
         <div class="field" id="campoOutroH" hidden><label for="rho">Nome do hospital</label><input id="rho" maxlength="120"></div>
         <div class="field"><label for="rs">Serviço / área <span class="hint">(opcional)</span></label><input id="rs" maxlength="120" placeholder="Pediatria, Neonatologia, Cardiologia Pediátrica…"></div>
       </div>
+      <label class="check small" style="margin-bottom:12px"><input type="checkbox" required> Comprometo-me a não introduzir dados que identifiquem doentes. Os termos completos são apresentados no primeiro acesso.</label>
       <div class="alert info small">A conta fica pendente até ser aprovada por um administrador do projeto.</div>
       <button class="btn" style="width:100%">Criar conta</button></form>`;
     const sync = () => {
@@ -422,6 +434,7 @@ function ecraPendente() {
 // Estrutura principal (menu lateral)
 // ---------------------------------------------------------------------------
 async function sair() {
+  try { await desativarPush(); } catch { /* ignore */ }
   try { await sb.auth.signOut({ scope: 'local' }); } catch { /* ignore */ }
   st.session = null; st.perfil = null;
   history.replaceState(null, '', location.pathname);
@@ -439,13 +452,14 @@ function shell() {
         <a href="#/casos" data-r="casos">${icon('casos')} Casos</a>
         <a href="#/novo" data-r="novo">${icon('novo')} Novo caso</a>
         <a href="#/projeto" data-r="projeto">${icon('docs')} Projeto e critérios</a>
+        <a href="#/privacidade" data-r="privacidade">${icon('escudo')} Privacidade e termos</a>
         <a href="#/notificacoes" data-r="notificacoes">${icon('sino')} Notificações <span class="count" id="nCount" hidden></span></a>
         ${isAdmin() ? `<a href="#/admin" data-r="admin">${icon('admin')} Administração</a>` : ''}
         <div class="sep"></div>
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
         <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 16</div></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 17</div></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
@@ -487,6 +501,7 @@ async function route() {
     else if (r === 'caso' && sub === 'editar') await vistaFormCaso(v, id);
     else if (r === 'caso') await vistaCaso(v, id);
     else if (r === 'projeto') await vistaProjeto(v);
+    else if (r === 'privacidade') await vistaPrivacidade(v);
     else if (r === 'notificacoes') await vistaNotificacoes(v);
     else if (r === 'admin' && isAdmin()) await vistaAdmin(v, id || 'utilizadores');
     else if (r === 'perfil') await vistaPerfil(v);
@@ -505,7 +520,7 @@ const filtros = { estado: 'abertos', prioridade: '', aces: '', unidade: '', meus
 
 async function vistaCasos(v) {
   const { data, error } = await sb.from('casos')
-    .select('id, codigo, idade_valor, idade_unidade, sexo, prioridade, area, motivo, estado, desfecho, reuniao_em, created_at, updated_at, criado_por, pediatra_id, unidade_id, unidades(nome, tipo, aces_id, aces(nome)), pediatra:perfis!casos_pediatra_id_fkey(nome)')
+    .select('id, codigo, idade_valor, idade_unidade, sexo, prioridade, area, motivo, estado, desfecho, reuniao_em, primeira_resposta_em, created_at, updated_at, criado_por, pediatra_id, unidade_id, unidades(nome, tipo, aces_id, aces(nome)), pediatra:perfis!casos_pediatra_id_fkey(nome)')
     .order('created_at', { ascending: false }).limit(500);
   if (error) throw error;
   const casos = data || [];
@@ -516,7 +531,7 @@ async function vistaCasos(v) {
     <div class="stats">
       <div class="stat"><b>${abertos.filter(c => c.estado === 'novo').length}</b><span>Novos por analisar</span></div>
       <div class="stat"><b style="color:var(--urg)">${abertos.filter(c => c.prioridade === 'urgente').length}</b><span>Urgentes em aberto</span></div>
-      <div class="stat"><b>${abertos.filter(c => c.estado === 'subespecialidade').length}</b><span>Com subespecialidade</span></div>
+      <div class="stat"><b style="color:${abertos.some(c => prazoCaso(c).atrasado) ? 'var(--urg)' : 'inherit'}">${abertos.filter(c => prazoCaso(c).atrasado).length}</b><span>Fora do prazo</span></div>
       <div class="stat"><b>${casos.filter(c => c.reuniao_em && new Date(c.reuniao_em) > new Date()).length}</b><span>Reuniões agendadas</span></div>
     </div>` : `
     <div class="stats">
@@ -536,9 +551,10 @@ async function vistaCasos(v) {
     <div class="row" style="align-items:center;margin-bottom:12px"><h1 style="margin:0">Casos</h1>
       <div style="flex:0 0 auto"><a class="btn" href="#/novo">${icon('novo')} Novo caso</a></div></div>
     ${stats}
+    <div id="pushBanner"></div>
     <div class="filters">
       ${!ped ? `<select id="fAmbito"><option value="meus" ${filtros.ambito === 'meus' ? 'selected' : ''}>Os meus casos</option><option value="unidade" ${filtros.ambito === 'unidade' ? 'selected' : ''}>Toda a minha unidade</option></select>` : ''}
-      <select id="fEstado"><option value="abertos">Em aberto</option><option value="">Todos os estados</option>
+      <select id="fEstado"><option value="abertos">Em aberto</option><option value="atrasados" ${filtros.estado === 'atrasados' ? 'selected' : ''}>Fora do prazo</option><option value="">Todos os estados</option>
         ${Object.entries(ESTADOS).map(([k, t]) => `<option value="${k}" ${filtros.estado === k ? 'selected' : ''}>${t}</option>`).join('')}</select>
       <select id="fPrio"><option value="">Todas as prioridades</option>${Object.entries(PRIORIDADES).map(([k, t]) => `<option value="${k}" ${filtros.prioridade === k ? 'selected' : ''}>${t}</option>`).join('')}</select>
       ${ped ? `<select id="fAces">${acesOpts}</select><select id="fUnid">${unidOpts}</select>
@@ -546,6 +562,11 @@ async function vistaCasos(v) {
       <input id="fQ" type="search" placeholder="Pesquisar código ou motivo" value="${esc(filtros.q)}">
     </div>
     <div class="cases" id="lista"></div>`;
+  if ((isAdmin() || ped) && PUSH_OK && Notification.permission === 'default' && localStorageGet('pushBanner') !== 'x') {
+    $('#pushBanner').innerHTML = `<div class="alert info small row" style="align-items:center;margin-bottom:12px"><span style="flex:1 1 200px">${icon('sino')} Ative as <b>notificações no telemóvel</b> para saber logo de casos novos e prazos.</span>
+      <span style="flex:0 0 auto" class="actions"><a class="btn small" href="#/perfil">Ativar</a><button class="btn secondary small" id="pbX">Agora não</button></span></div>`;
+    $('#pbX').onclick = () => { localStorageSet('pushBanner', 'x'); $('#pushBanner').innerHTML = ''; };
+  }
   if (filtros.estado === 'abertos') $('#fEstado').value = 'abertos';
   else if (!filtros.estado) $('#fEstado').value = '';
 
@@ -553,18 +574,19 @@ async function vistaCasos(v) {
     const q = filtros.q.trim().toLowerCase();
     const lista = casos.filter(c =>
       (ped || filtros.ambito === 'unidade' || c.criado_por === st.perfil.id) &&
-      (filtros.estado === 'abertos' ? c.estado !== 'fechado' : !filtros.estado || c.estado === filtros.estado) &&
+      (filtros.estado === 'abertos' ? c.estado !== 'fechado' : filtros.estado === 'atrasados' ? prazoCaso(c).atrasado : !filtros.estado || c.estado === filtros.estado) &&
       (!filtros.prioridade || c.prioridade === filtros.prioridade) &&
       (!filtros.aces || c.unidades?.aces_id === filtros.aces) &&
       (!filtros.unidade || c.unidade_id === filtros.unidade) &&
       (!filtros.meus || c.pediatra_id === st.perfil.id) &&
       (!q || c.codigo.toLowerCase().includes(q) || c.motivo.toLowerCase().includes(q) || (c.area || '').toLowerCase().includes(q))
-    ).sort((a, b) => (a.estado === 'fechado') - (b.estado === 'fechado') || PRIO_ORDEM[a.prioridade] - PRIO_ORDEM[b.prioridade] || new Date(a.created_at) - new Date(b.created_at));
+    ).sort((a, b) => (a.estado === 'fechado') - (b.estado === 'fechado') || prazoCaso(b).atrasado - prazoCaso(a).atrasado || PRIO_ORDEM[a.prioridade] - PRIO_ORDEM[b.prioridade] || new Date(a.created_at) - new Date(b.created_at));
     $('#lista').innerHTML = lista.length ? lista.map(c => `
-      <a class="case ${c.prioridade}" href="#/caso/${c.id}">
+      <a class="case ${c.prioridade} ${prazoCaso(c).atrasado ? 'atrasado' : ''}" href="#/caso/${c.id}">
         <div class="top"><span class="code">${esc(c.codigo)}</span>
           <span class="badge p-${c.prioridade}">${PRIORIDADES[c.prioridade]}</span>
           <span class="badge e-${c.estado}">${ESTADOS[c.estado]}</span>
+          ${prazoCaso(c).atrasado ? `<span class="badge atraso">Fora do prazo · ${prazoCaso(c).atrasoTxt}</span>` : ''}
           ${c.desfecho ? `<span class="badge">${esc(DESFECHOS[c.desfecho])}</span>` : ''}
           ${c.area ? `<span class="badge">${esc(c.area)}</span>` : ''}</div>
         <div class="motivo">${esc(c.motivo)}</div>
@@ -763,7 +785,12 @@ async function vistaCaso(v, id) {
         <section class="card"><h2>Resposta da pediatria</h2>
           ${c.pediatra ? `<p class="small muted">Responsável: <b>${esc(c.pediatra.nome)}</b>${c.pediatra.servico ? ' · ' + esc(c.pediatra.servico) : ''}</p>` : ''}
           ${c.subespecialidade ? `<p class="small">Discutido com: <b>${esc(c.subespecialidade)}</b></p>` : ''}
-          ${c.reuniao_em ? `<div class="alert info"><b>Reunião:</b> ${fmtDataHora(c.reuniao_em)}${c.reuniao_local ? '<br>' + esc(c.reuniao_local) : ''}</div>` : ''}
+          ${(() => { const pz = prazoCaso(c); return !pz.pendente ? '' : pz.atrasado
+            ? `<div class="alert err small"><b>Fora do prazo</b> há ${pz.atrasoTxt}. Prazo de resposta para prioridade ${PRIORIDADES[c.prioridade].toLowerCase()}: ${PRAZO_TXT[c.prioridade]} (até ${fmtDataHora(pz.limite)}).</div>`
+            : `<p class="small muted">Prazo de resposta: até <b>${fmtDataHora(pz.limite)}</b> (${PRAZO_TXT[c.prioridade]}).</p>`; })()}
+          ${c.reuniao_em ? `<div class="alert info"><b>Reunião:</b> ${fmtDataHora(c.reuniao_em)}${c.reuniao_local ? '<br>' + esc(c.reuniao_local) : ''}
+            <div class="actions" style="margin-top:8px"><a class="btn secondary small" href="${icsUrl(c)}" download="PedLink-${esc(c.codigo)}.ics">${icon('cal')} Adicionar ao calendário</a>
+            <a class="btn secondary small" href="${googleCalUrl(c)}" target="_blank" rel="noopener">Google Calendar</a></div></div>` : ''}
           ${c.resposta ? `<div class="answer">${esc(c.resposta)}</div>` : '<p class="muted">Ainda sem resposta.</p>'}
           ${c.desfecho ? `<p style="margin-top:12px"><b>Desfecho:</b> ${esc(DESFECHOS[c.desfecho])}${c.desfecho_nota ? '<br>' + esc(c.desfecho_nota) : ''}</p>` : ''}
         </section>
@@ -946,6 +973,7 @@ async function vistaPerfil(v) {
     <form class="card" id="fpw"><h2>Alterar palavra-passe</h2>
       <div class="field"><label for="pwN">Nova palavra-passe</label><input id="pwN" type="password" minlength="8" required autocomplete="new-password"></div>
       <button class="btn secondary">Alterar</button></form>
+    <section class="card" id="pushCard"></section>
     <section class="card"><h2>Sessão</h2><p class="muted small">Termine a sessão para outra pessoa poder usar este dispositivo.</p>
       <button class="btn danger" id="pfSair">${icon('sair')} Sair da conta</button></section>
     <section class="card"><h2>Aspeto</h2><div class="seg" id="tema">
@@ -965,6 +993,7 @@ async function vistaPerfil(v) {
     e.target.reset(); toast('Palavra-passe alterada.');
   };
   $('#pfSair').onclick = () => sair();
+  cartaoPush($('#pushCard'));
   $$('input[name=tema]').forEach(r => r.onchange = () => { localStorageSet('tema', r.value); aplicarTema(); });
 }
 
@@ -1111,26 +1140,204 @@ async function adminEmails(a) {
 }
 
 async function adminEstatisticas(a) {
-  const { data, error } = await sb.from('casos').select('estado, prioridade, desfecho, area, created_at, updated_at, unidade_id, unidades(nome, tipo, aces(nome))');
+  const { data, error } = await sb.from('casos').select('codigo, idade_valor, idade_unidade, sexo, estado, prioridade, desfecho, subespecialidade, created_at, primeira_resposta_em, fechado_em, unidades(nome, tipo, aces(nome))').order('created_at');
   if (error) throw error;
+  const H = (x, y) => (new Date(y) - new Date(x)) / 3600000;
   const conta = (arr, f) => arr.reduce((m, x) => { const k = f(x) || '—'; m[k] = (m[k] || 0) + 1; return m; }, {});
-  const tabela = (titulo, obj, map = {}) => `<section class="card"><h2>${titulo}</h2><table class="table"><tbody>${Object.entries(obj).sort((x, y) => y[1] - x[1]).map(([k, n]) => `<tr><td>${esc(map[k] || k)}</td><td style="text-align:right"><b>${n}</b></td></tr>`).join('') || '<tr><td class="muted">Sem dados.</td></tr>'}</tbody></table></section>`;
+  const tabela = (titulo, obj, map = {}, ordenar = true) => `<section class="card"><h2>${titulo}</h2><table class="table"><tbody>${(ordenar ? Object.entries(obj).sort((x, y) => y[1] - x[1]) : Object.entries(obj)).map(([k, n]) => `<tr><td>${esc(map[k] || k)}</td><td style="text-align:right"><b>${n}</b></td></tr>`).join('') || '<tr><td class="muted">Sem dados.</td></tr>'}</tbody></table></section>`;
+  const respondidos = data.filter(c => c.primeira_resposta_em);
+  const tResp = respondidos.map(c => H(c.created_at, c.primeira_resposta_em));
+  const noPrazo = respondidos.filter(c => H(c.created_at, c.primeira_resposta_em) <= PRAZO_H[c.prioridade]).length;
   const fechados = data.filter(c => c.estado === 'fechado');
-  const tempos = fechados.map(c => (new Date(c.updated_at) - new Date(c.created_at)) / 86400000).sort((x, y) => x - y);
-  const mediana = tempos.length ? tempos[Math.floor(tempos.length / 2)].toFixed(1) : '—';
+  const comDesf = data.filter(c => c.desfecho);
+  const evitadas = comDesf.filter(c => c.desfecho === 'nao_referenciar' || c.desfecho === 'seguimento_mgf').length;
+  const atrasados = data.filter(c => prazoCaso(c).atrasado).length;
+  const porPrio = Object.keys(PRIORIDADES).map(k => { const r = respondidos.filter(c => c.prioridade === k); return `<tr><td>${PRIORIDADES[k]} <span class="muted small">(prazo ${PRAZO_TXT[k]})</span></td><td style="text-align:right">${fmtHoras(mediana(r.map(c => H(c.created_at, c.primeira_resposta_em))))}</td><td style="text-align:right">${r.length ? Math.round(100 * r.filter(c => H(c.created_at, c.primeira_resposta_em) <= PRAZO_H[k]).length / r.length) + '%' : '—'}</td></tr>`; }).join('');
   a.innerHTML = `<div class="stats">
-      <div class="stat"><b>${data.length}</b><span>Casos totais</span></div>
-      <div class="stat"><b>${fechados.length}</b><span>Fechados</span></div>
-      <div class="stat"><b>${fechados.length ? Math.round(100 * fechados.filter(c => c.desfecho === 'nao_referenciar' || c.desfecho === 'seguimento_mgf').length / fechados.length) + '%' : '—'}</b><span>Resolvidos sem referenciação</span></div>
-      <div class="stat"><b>${mediana}</b><span>Mediana de dias até fecho</span></div></div>
+      <div class="stat"><b>${data.length}</b><span>Casos submetidos</span></div>
+      <div class="stat"><b>${fmtHoras(mediana(tResp))}</b><span>Mediana até 1.ª resposta</span></div>
+      <div class="stat"><b>${respondidos.length ? Math.round(100 * noPrazo / respondidos.length) + '%' : '—'}</b><span>Respondidos dentro do prazo</span></div>
+      <div class="stat"><b style="color:${atrasados ? 'var(--urg)' : 'inherit'}">${atrasados}</b><span>Fora do prazo agora</span></div>
+      <div class="stat"><b>${comDesf.length ? Math.round(100 * evitadas / comDesf.length) + '%' : '—'}</b><span>Resolvidos sem referenciação</span></div>
+      <div class="stat"><b>${fmtHoras(mediana(fechados.filter(c => c.fechado_em).map(c => H(c.created_at, c.fechado_em))))}</b><span>Mediana até fecho</span></div></div>
+    <section class="card"><h2>Exportar para Excel</h2>
+      <p class="small muted">Ficheiro CSV <b>anónimo</b>, sem texto livre: código, datas, unidade, prioridade, idade, sexo, estado, subespecialidade, desfecho e tempos de resposta. Abre diretamente no Excel.</p>
+      <button class="btn" id="expCsv">Exportar ${data.length} caso(s)</button></section>
+    <section class="card"><h2>Tempo até 1.ª resposta por prioridade</h2><table class="table"><thead><tr><th></th><th style="text-align:right">Mediana</th><th style="text-align:right">No prazo</th></tr></thead><tbody>${porPrio}</tbody></table></section>
     <div class="grid2">
-      ${tabela('Por desfecho', conta(fechados, c => c.desfecho), DESFECHOS)}
+      ${tabela('Por mês de submissão', conta(data, c => c.created_at.slice(0, 7)), {}, false)}
+      ${tabela('Por desfecho', conta(comDesf, c => c.desfecho), DESFECHOS)}
       ${tabela('Por estado', conta(data, c => c.estado), ESTADOS)}
-      ${tabela('Por área', conta(data, c => c.area))}
+      ${tabela('Por subespecialidade consultada', conta(data.filter(c => c.subespecialidade), c => c.subespecialidade))}
       ${tabela('Por ACES', conta(data, c => c.unidades?.aces?.nome))}
       ${tabela('Por unidade', conta(data, c => unidadeTxt(c.unidades)))}
       ${tabela('Por prioridade', conta(data, c => c.prioridade), PRIORIDADES)}
     </div>`;
+  const num = (x) => x == null ? '' : x.toFixed(1).replace('.', ',');
+  const dataPT = (d) => d ? new Date(d).toLocaleString('pt-PT', { timeZone: 'Europe/Lisbon' }) : '';
+  $('#expCsv').onclick = () => exportarCSV(data.map(c => {
+    const h1 = c.primeira_resposta_em ? H(c.created_at, c.primeira_resposta_em) : null;
+    return {
+      codigo: c.codigo, data_submissao: dataPT(c.created_at), mes: c.created_at.slice(0, 7),
+      aces: c.unidades?.aces?.nome || '', unidade: unidadeTxt(c.unidades), tipo_unidade: c.unidades?.tipo || '',
+      prioridade: PRIORIDADES[c.prioridade], idade: c.idade_valor, idade_unidade: c.idade_unidade, sexo: c.sexo,
+      estado: ESTADOS[c.estado], subespecialidade: c.subespecialidade || '', desfecho: c.desfecho ? DESFECHOS[c.desfecho] : '',
+      data_1a_resposta: dataPT(c.primeira_resposta_em), horas_ate_1a_resposta: num(h1),
+      prazo_horas: PRAZO_H[c.prioridade], dentro_do_prazo: h1 == null ? (prazoCaso(c).atrasado ? 'não (pendente)' : 'pendente') : h1 <= PRAZO_H[c.prioridade] ? 'sim' : 'não',
+      data_fecho: dataPT(c.fechado_em), dias_ate_fecho: c.fechado_em ? num(H(c.created_at, c.fechado_em) / 24) : '',
+    };
+  }), `PedLink-casos-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+
+// ---------------------------------------------------------------------------
+// Calendário (.ics e Google Calendar) — sem dados clínicos, só o código do caso
+// ---------------------------------------------------------------------------
+function icsData(d) { return new Date(d).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); }
+function textoCal(c) {
+  return { titulo: `PedLink — reunião caso ${c.codigo}`, local: c.reuniao_local || '', desc: `Discussão do caso ${c.codigo} no PedLink: ${location.origin + location.pathname}#/caso/${c.id}` };
+}
+function icsUrl(c) {
+  const t = textoCal(c), ini = new Date(c.reuniao_em), fim = new Date(ini.getTime() + 30 * 60000);
+  const e = (x) => String(x).replace(/\\/g, '\\\\').replace(/[,;]/g, m => '\\' + m).replace(/\n/g, '\\n');
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//PedLink//PT', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
+    'UID:' + c.id + '-' + icsData(ini) + '@pedlink', 'DTSTAMP:' + icsData(Date.now()), 'DTSTART:' + icsData(ini), 'DTEND:' + icsData(fim),
+    'SUMMARY:' + e(t.titulo), 'LOCATION:' + e(t.local), 'DESCRIPTION:' + e(t.desc),
+    'BEGIN:VALARM', 'TRIGGER:-PT30M', 'ACTION:DISPLAY', 'DESCRIPTION:' + e(t.titulo), 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  return 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics);
+}
+function googleCalUrl(c) {
+  const t = textoCal(c), ini = new Date(c.reuniao_em), fim = new Date(ini.getTime() + 30 * 60000);
+  return 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' + encodeURIComponent(t.titulo) + '&dates=' + icsData(ini) + '/' + icsData(fim)
+    + '&location=' + encodeURIComponent(t.local) + '&details=' + encodeURIComponent(t.desc);
+}
+
+// ---------------------------------------------------------------------------
+// Privacidade e termos
+// ---------------------------------------------------------------------------
+async function textoPrivacidade() {
+  const { data } = await sb.from('conteudos').select('titulo, corpo').eq('chave', 'privacidade').maybeSingle();
+  return data || { titulo: 'Privacidade e termos de uso', corpo: 'Texto ainda não disponível.' };
+}
+async function vistaPrivacidade(v) {
+  const t = await textoPrivacidade();
+  v.innerHTML = `<h1>${esc(t.titulo)}</h1><section class="card"><div class="prose" id="pvTxt">${esc(t.corpo)}</div>
+    ${st.perfil?.termos_aceites_em ? `<p class="small muted" style="margin-top:12px">Aceite por si em ${fmtDataHora(st.perfil.termos_aceites_em)}.</p>` : ''}
+    ${isAdmin() ? `<div class="actions"><button class="btn secondary small" id="editPv">Editar texto</button></div>` : ''}</section>`;
+  if (!isAdmin()) return;
+  $('#editPv').onclick = () => {
+    $('#pvTxt').outerHTML = `<form id="fpv"><div class="field"><input id="pvT" value="${esc(t.titulo)}" maxlength="200"></div>
+      <div class="field"><textarea id="pvB" rows="22">${esc(t.corpo)}</textarea></div>
+      <div class="actions"><button class="btn">Guardar</button></div></form>`;
+    $('#editPv').remove();
+    $('#fpv').onsubmit = async (e) => {
+      e.preventDefault();
+      const { error } = await sb.from('conteudos').upsert({ chave: 'privacidade', titulo: $('#pvT').value.trim(), corpo: $('#pvB').value, updated_at: new Date().toISOString() });
+      if (error) return toast(erroMsg(error), true);
+      toast('Texto atualizado.'); route();
+    };
+  };
+}
+async function ecraTermos() {
+  const t = await textoPrivacidade();
+  document.body.innerHTML = `<div class="auth"><div class="card" style="width:min(720px,100%)">
+    <div class="brand" style="padding:0 0 12px"><img src="icons/logo.svg" alt="">PedLink</div>
+    <h1 style="margin-top:0">${esc(t.titulo)}</h1>
+    <p class="muted small">Antes de começar, leia e aceite as regras de utilização.</p>
+    <div class="prose termos">${esc(t.corpo)}</div>
+    <label class="check" style="margin:14px 0"><input type="checkbox" id="tAc"> <span>Li e aceito. Comprometo-me a <b>não introduzir dados que identifiquem doentes</b>.</span></label>
+    <button class="btn" id="tOk" disabled style="width:100%">Continuar</button>
+    <div style="text-align:center;margin-top:10px"><button class="linkbtn" id="tSair">Sair</button></div></div></div>`;
+  $('#tAc').onchange = () => { $('#tOk').disabled = !$('#tAc').checked; };
+  $('#tSair').onclick = () => sair();
+  $('#tOk').onclick = async () => {
+    $('#tOk').disabled = true;
+    const { error } = await sb.from('perfis').update({ termos_aceites_em: new Date().toISOString() }).eq('id', st.perfil.id);
+    if (error) { $('#tOk').disabled = false; return toast(erroMsg(error), true); }
+    await carregarPerfil();
+    if (!st.perfil.termos_aceites_em) st.perfil.termos_aceites_em = new Date().toISOString();
+    location.reload();
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Notificações no telemóvel (Web Push)
+// ---------------------------------------------------------------------------
+const EM_APP = (navigator.standalone === true) || matchMedia('(display-mode: standalone)').matches;
+const PUSH_OK = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function b64urlParaBytes(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, ch => ch.charCodeAt(0));
+}
+async function subscricaoAtual() {
+  if (!PUSH_OK) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+async function ativarPush() {
+  if (!PUSH_OK) throw new Error(IOS && !EM_APP ? 'No iPhone, as notificações só funcionam com o PedLink instalado no ecrã principal (Partilhar → Adicionar ao ecrã principal) e aberto a partir do ícone.' : 'Este navegador não suporta notificações.');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Notificações não autorizadas. Pode autorizar nas Definições do telemóvel › Notificações › PedLink.');
+  const { data: cfg } = await sb.from('config_publica').select('valor').eq('chave', 'vapid_public').maybeSingle();
+  if (!cfg?.valor) throw new Error('O serviço de notificações ainda não está configurado no servidor.');
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlParaBytes(cfg.valor) });
+  const j = sub.toJSON();
+  await sb.from('push_subscricoes').delete().eq('endpoint', j.endpoint);
+  const { error } = await sb.from('push_subscricoes').insert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, dispositivo: (IOS ? 'iPhone/iPad' : navigator.platform || 'browser').slice(0, 60) });
+  if (error) throw error;
+}
+async function desativarPush() {
+  const sub = await subscricaoAtual();
+  if (!sub) return;
+  try { await sb.from('push_subscricoes').delete().eq('endpoint', sub.endpoint); } catch { /* ignore */ }
+  try { await sub.unsubscribe(); } catch { /* ignore */ }
+}
+async function cartaoPush(el) {
+  const sub = await subscricaoAtual().catch(() => null);
+  let reg = false;
+  if (sub) { const { data } = await sb.from('push_subscricoes').select('id').eq('endpoint', sub.endpoint).maybeSingle(); reg = !!data; }
+  const ativo = sub && reg && Notification.permission === 'granted';
+  el.innerHTML = `<h2>${icon('sino')} Notificações no telemóvel</h2>
+    ${!PUSH_OK ? `<p class="small">${IOS && !EM_APP
+      ? 'No iPhone, as notificações só funcionam com o PedLink <b>instalado no ecrã principal</b>: no Safari toque em Partilhar → "Adicionar ao ecrã principal", e depois abra o PedLink a partir desse ícone e volte aqui.'
+      : 'Este navegador não suporta notificações.'}</p>`
+    : ativo ? `<p class="small"><span class="badge p-normal">Ativas neste dispositivo</span> Recebe aqui os avisos de casos novos, mensagens, prazos ultrapassados${isAdmin() ? ' e pedidos de acesso' : ''}.</p>
+      <div class="actions"><button class="btn secondary small" id="pushTeste">Enviar notificação de teste</button><button class="btn secondary small" id="pushOff">Desativar</button></div>`
+    : `<p class="small">Receba no telemóvel os avisos de casos novos, mensagens, prazos ultrapassados${isAdmin() ? ' e pedidos de acesso' : ''}, mesmo com a app fechada.</p>
+      <button class="btn" id="pushOn">${icon('sino')} Ativar notificações</button>`}`;
+  $('#pushOn', el)?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try { await ativarPush(); toast('Notificações ativadas neste dispositivo.'); } catch (err) { toast(erroMsg(err), true); }
+    cartaoPush(el);
+  });
+  $('#pushOff', el)?.addEventListener('click', async () => { await desativarPush(); toast('Notificações desativadas.'); cartaoPush(el); });
+  $('#pushTeste', el)?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    const { error } = await sb.rpc('notificacao_teste');
+    toast(error ? erroMsg(error) : 'Enviada. Deve chegar dentro de segundos.', !!error);
+    setTimeout(() => { e.target.disabled = false; }, 3000);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Indicadores e exportação anónima
+// ---------------------------------------------------------------------------
+function mediana(arr) { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y), m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
+function fmtHoras(h) { return h == null ? '—' : h < 48 ? h.toFixed(h < 10 ? 1 : 0).replace('.', ',') + ' h' : (h / 24).toFixed(1).replace('.', ',') + ' dias'; }
+async function exportarCSV(linhas, nome) {
+  const cab = Object.keys(linhas[0] || { sem_dados: '' });
+  const cel = (x) => { const t = x == null ? '' : String(x); return /[;"\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  const csv = '﻿' + [cab.join(';'), ...linhas.map(l => cab.map(k => cel(l[k])).join(';'))].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const file = new File([blob], nome, { type: 'text/csv' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: nome }); return; } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nome;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1156,6 +1363,7 @@ async function arrancar() {
   st.perfilErro = null;
   try { await carregarPerfil(); } catch (e) { st.perfil = null; st.perfilErro = e?.message || String(e); console.error(e); }
   if (!st.perfil || !st.perfil.aprovado || !st.perfil.ativo) return ecraPendente();
+  if (!st.perfil.termos_aceites_em) return ecraTermos();
   shell();
   route();
 }

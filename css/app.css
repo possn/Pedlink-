@@ -204,3 +204,8 @@ select { min-width: 0; text-overflow: ellipsis; }
 
 html, body { overflow-x: clip; }
 @media (max-width: 860px) { input, select, textarea { font-size: 16px; } }
+
+/* prazos */
+.badge.atraso { background: var(--urg); color: #fff; }
+.case.atrasado { box-shadow: 0 0 0 2px var(--urg) inset; }
+.termos { max-height: 50vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 9px; padding: 12px; font-size: .9rem; }

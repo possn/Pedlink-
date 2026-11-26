@@ -1,5 +1,5 @@
 // Service worker: guarda só a "casca" da app. Dados clínicos nunca são guardados em cache.
-const CACHE = 'pedlink-v16';
+const CACHE = 'pedlink-v17';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/config.js',
   'manifest.webmanifest', 'icons/logo.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
@@ -19,4 +19,22 @@ self.addEventListener('fetch', e => {
     caches.open(CACHE).then(c => c.put(e.request, copy));
     return r;
   }).catch(() => caches.match(e.request).then(r => r || caches.match('index.html'))));
+});
+
+// Notificações no telemóvel (Web Push)
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'PedLink', {
+    body: d.body || 'Tem uma nova notificação.', icon: 'icons/icon-192.png', badge: 'icons/icon-192.png',
+    tag: d.tag || undefined, data: { url: d.url || '#/notificacoes' },
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const alvo = new URL('./' + (e.notification.data?.url || ''), self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
+    for (const c of cs) { if ('focus' in c) { c.navigate(alvo).catch(() => {}); return c.focus(); } }
+    return self.clients.openWindow(alvo);
+  }));
 });
