@@ -171,3 +171,10 @@ input[type=checkbox], input[type=radio] { width: auto; accent-color: var(--brand
 #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(120px); background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 10px; font-weight: 600; transition: transform .25s, opacity .25s; z-index: 100; opacity: 0; visibility: hidden; max-width: calc(100vw - 32px); }
 #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; visibility: visible; }
 #toast.err { background: var(--urg); color: #fff; }
+
+/* ditado */
+.labelrow { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; margin-bottom: 4px; }
+.labelrow label { margin-bottom: 0; }
+.mic { flex: none; padding: 4px 10px; }
+.mic.on { background: var(--urg); border-color: var(--urg); color: #fff; animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .7; } }

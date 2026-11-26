@@ -49,6 +49,7 @@ function icon(name) {
     menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
     sair: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>',
     voltar: '<path d="M15 6l-6 6 6 6"/>',
+    mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
     cadeado: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   }[name] || '';
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
@@ -93,6 +94,51 @@ function verificarTexto(t) {
   if (/\b(chama-se|de nome|nome:|o\s+\w+\s+tem\s+\d)/i.test(t)) avisos.push('possível nome próprio');
   if (/\b(sr\.?|sra\.?|dona|d\.)\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+/.test(t)) avisos.push('possível nome de familiar');
   return { bloqueios, avisos };
+}
+
+// Ditado por voz (Web Speech API: Safari iOS 14.5+, Chrome, Edge)
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let ditado = null; // { rec, alvo, btn }
+function botaoDitar(alvoId) {
+  return SR ? `<button type="button" class="btn secondary small mic" data-ditar="${alvoId}">${icon('mic')} <span>Ditar</span></button>` : '';
+}
+function pararDitado() {
+  if (!ditado) return;
+  const d = ditado; ditado = null;
+  try { d.rec.stop(); } catch { /* ignore */ }
+  d.btn.classList.remove('on'); d.btn.querySelector('span').textContent = 'Ditar';
+}
+function ligarDitado(root) {
+  if (!SR) return;
+  $$('[data-ditar]', root).forEach(btn => btn.onclick = () => {
+    const alvo = document.getElementById(btn.dataset.ditar);
+    if (ditado && ditado.btn === btn) return pararDitado();
+    pararDitado();
+    const rec = new SR();
+    rec.lang = 'pt-PT'; rec.continuous = true; rec.interimResults = false;
+    rec.onresult = (ev) => {
+      let txt = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) if (ev.results[i].isFinal) txt += ev.results[i][0].transcript;
+      txt = txt.trim();
+      if (!txt) return;
+      txt = txt.replace(/\s+(ponto final|ponto)\b/gi, '.').replace(/\s+vírgula\b/gi, ',').replace(/\s*(nova linha|parágrafo)\s*/gi, '\n');
+      const antes = alvo.value;
+      const sep = !antes || /[\s\n]$/.test(antes) ? '' : ' ';
+      let novo = txt;
+      if (!antes || /[.!?\n]\s*$/.test(antes)) novo = novo.charAt(0).toUpperCase() + novo.slice(1);
+      alvo.value = (antes + sep + novo).slice(0, alvo.maxLength > 0 ? alvo.maxLength : undefined);
+      alvo.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    rec.onerror = (ev) => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') toast('Sem permissão para o microfone. Autorize nas definições do browser.', true);
+      else if (ev.error !== 'no-speech' && ev.error !== 'aborted') toast('Ditado interrompido: ' + ev.error, true);
+    };
+    rec.onend = () => { if (ditado && ditado.rec === rec) pararDitado(); };
+    ditado = { rec, alvo, btn };
+    btn.classList.add('on'); btn.querySelector('span').textContent = 'Parar';
+    alvo.focus();
+    try { rec.start(); } catch (err) { pararDitado(); toast('Não foi possível iniciar o ditado.', true); }
+  });
 }
 
 // Reprocessa imagens num canvas: remove EXIF/GPS/metadados e reduz tamanho
@@ -325,6 +371,7 @@ async function route() {
   const h = location.hash.replace(/^#\/?/, '') || 'casos';
   const [r, id, sub] = h.split('/');
   $('#shell')?.classList.remove('open');
+  pararDitado();
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.r === r || (r === 'caso' && a.dataset.r === 'casos')));
   const v = $('#view');
   v.innerHTML = '<p class="muted">A carregar…</p>';
@@ -435,7 +482,7 @@ async function vistaFormCaso(v, id) {
     c = data;
   }
   const campoTexto = (k, label, hint, rows = 4, req = false, max = 6000) => `
-    <div class="field"><label for="c_${k}">${label}${hint ? ` <span class="hint">${hint}</span>` : ''}</label>
+    <div class="field"><div class="labelrow"><label for="c_${k}">${label}${hint ? ` <span class="hint">${hint}</span>` : ''}</label>${botaoDitar('c_' + k)}</div>
       <textarea id="c_${k}" data-k="${k}" rows="${rows}" maxlength="${max}" ${req ? 'required' : ''}>${esc(c[k])}</textarea><div class="fielderr" id="e_${k}"></div></div>`;
 
   v.innerHTML = `
@@ -451,16 +498,15 @@ async function vistaFormCaso(v, id) {
         <div class="field"><label>Sexo</label><div class="seg">
           ${['F', 'M', 'Indeterminado'].map(s => `<label><input type="radio" name="sexo" value="${s}" ${c.sexo === s ? 'checked' : ''} required> ${sexoTxt(s)}</label>`).join('')}</div></div>
       </div>
-      <div class="grid2">
+      <div>
         <div class="field"><label>Prioridade</label><div class="seg">
           ${Object.entries(PRIORIDADES).map(([k, t]) => `<label><input type="radio" name="prio" value="${k}" ${c.prioridade === k ? 'checked' : ''}> ${t}</label>`).join('')}</div>
           <div class="muted small" style="margin-top:4px">Situações emergentes devem seguir para o Serviço de Urgência, não para a app.</div></div>
-        <div class="field"><label for="c_area">Área / subespecialidade <span class="hint">(opcional)</span></label>
-          <select id="c_area"><option value="">—</option>${AREAS.map(a => `<option ${c.area === a ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
       </div>
       ${(isPed() || !st.perfil.unidade_id) ? `<div class="field"><label for="c_unid">Unidade de origem</label><select id="c_unid" required>${opcoesUnidades(c.unidade_id)}</select></div>` : ''}
       <h2 style="margin-top:8px">Caso clínico</h2>
-      <div class="field"><label for="c_motivo">Motivo da discussão <span class="hint">(1 linha)</span></label>
+      ${SR ? `<div class="alert info small">${icon('mic')} Pode <b>ditar</b> em vez de escrever: toque em "Ditar" ao lado de cada campo e fale. O texto é convertido pelo reconhecimento de voz do telemóvel/browser, por isso não dite nomes nem números identificativos.</div>` : ''}
+      <div class="field"><div class="labelrow"><label for="c_motivo">Motivo da discussão <span class="hint">(1 linha)</span></label>${botaoDitar('c_motivo')}</div>
         <input id="c_motivo" data-k="motivo" maxlength="300" required value="${esc(c.motivo)}" placeholder="Ex.: Sopro cardíaco em criança assintomática"><div class="fielderr" id="e_motivo"></div></div>
       ${campoTexto('historia', 'História clínica', '(antecedentes, evolução, curva de crescimento)', 6, false, 8000)}
       ${campoTexto('exame_objetivo', 'Exame objetivo', '', 3, false, 4000)}
@@ -489,10 +535,12 @@ async function vistaFormCaso(v, id) {
     return !bloq;
   };
   campos.forEach(k => $(`#c_${k}`).addEventListener('input', validar));
+  ligarDitado(v);
   validar();
 
   $('#fc').onsubmit = async (e) => {
     e.preventDefault();
+    pararDitado();
     const f = e.target;
     if (!validar()) return toast('Existem dados identificativos a remover.', true);
     if (!f.checkValidity()) { f.reportValidity(); return; }
@@ -500,7 +548,6 @@ async function vistaFormCaso(v, id) {
     const row = {
       idade_valor: parseInt($('#c_idade').value, 10), idade_unidade: $('#c_idade_u').value,
       sexo: $('input[name=sexo]:checked')?.value, prioridade: $('input[name=prio]:checked')?.value || 'normal',
-      area: $('#c_area').value || null,
       motivo: $('#c_motivo').value.trim(), historia: $('#c_historia').value.trim() || null,
       exame_objetivo: $('#c_exame_objetivo').value.trim() || null, exames: $('#c_exames').value.trim() || null,
       terapeutica: $('#c_terapeutica').value.trim() || null, pergunta: $('#c_pergunta').value.trim(),
@@ -597,7 +644,7 @@ async function vistaCaso(v, id) {
               <div class="h"><b>${esc(m.autor?.nome || 'Colega')}</b><span>${m.autor?.papel === 'pediatra' ? 'Pediatria' : 'MGF'}</span><span>${fmtDataHora(m.created_at)}</span>${m.interno ? '<span class="badge e-subespecialidade">Nota interna da pediatria</span>' : ''}</div>
               <div class="t">${esc(m.texto)}</div></div>`).join('') || '<p class="muted">Ainda sem mensagens.</p>'}</div>
           <form id="fm">
-            <div class="field"><textarea id="mTxt" rows="3" maxlength="4000" required placeholder="${ped ? 'Mensagem para o médico de família, ou nota interna' : 'Escreva uma mensagem ou acrescente informação'}"></textarea><div class="fielderr" id="mErr"></div></div>
+            <div class="field"><div class="labelrow"><span></span>${botaoDitar('mTxt')}</div><textarea id="mTxt" rows="3" maxlength="4000" required placeholder="${ped ? 'Mensagem para o médico de família, ou nota interna' : 'Escreva uma mensagem ou acrescente informação'}"></textarea><div class="fielderr" id="mErr"></div></div>
             <div class="row" style="align-items:center">
               ${ped ? '<label class="check" style="flex:1 1 auto"><input type="checkbox" id="mInt"> Nota interna (só pediatras, ex.: discussão com subespecialidade)</label>' : '<span></span>'}
               <div style="flex:0 0 auto"><button class="btn">Enviar</button></div></div>
@@ -618,7 +665,7 @@ async function vistaCaso(v, id) {
             <div class="field"><label for="gPed">Pediatra responsável</label><select id="gPed"><option value="">—</option>${(pediatras || []).map(p => `<option value="${p.id}" ${c.pediatra_id === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>
               ${c.pediatra_id !== st.perfil.id ? '<button type="button" class="linkbtn small" id="gMim">Atribuir a mim</button>' : ''}</div>
             <div class="field"><label for="gSub">Subespecialidade consultada</label><input id="gSub" maxlength="120" list="areasList" value="${esc(c.subespecialidade)}"><datalist id="areasList">${AREAS.map(a => `<option>${a}</option>`).join('')}</datalist></div>
-            <div class="field"><label for="gResp">Resposta ao MGF <span class="hint">(visível ao médico de família)</span></label><textarea id="gResp" rows="5" maxlength="8000">${esc(c.resposta)}</textarea><div class="fielderr" id="gErr"></div></div>
+            <div class="field"><div class="labelrow"><label for="gResp">Resposta ao MGF <span class="hint">(visível ao médico de família)</span></label>${botaoDitar('gResp')}</div><textarea id="gResp" rows="5" maxlength="8000">${esc(c.resposta)}</textarea><div class="fielderr" id="gErr"></div></div>
             <div class="grid2">
               <div class="field"><label for="gReu">Reunião presencial</label><input id="gReu" type="datetime-local" value="${toLocalInput(c.reuniao_em)}"></div>
               <div class="field"><label for="gLoc">Local / ligação</label><input id="gLoc" maxlength="300" value="${esc(c.reuniao_local)}" placeholder="Sala, USF ou link Teams"></div>
@@ -630,6 +677,7 @@ async function vistaCaso(v, id) {
       </div>
     </div>`;
 
+  ligarDitado(v);
   $('#apagar')?.addEventListener('click', async () => {
     if (!confirm('Apagar definitivamente este caso?')) return;
     const { error } = await sb.from('casos').delete().eq('id', id);
@@ -644,6 +692,7 @@ async function vistaCaso(v, id) {
 
   $('#fm').onsubmit = async (e) => {
     e.preventDefault();
+    pararDitado();
     const texto = $('#mTxt').value.trim();
     const { bloqueios } = verificarTexto(texto);
     if (bloqueios.length) { $('#mErr').textContent = 'Remova: ' + bloqueios.join(', ') + '.'; return; }
@@ -660,6 +709,7 @@ async function vistaCaso(v, id) {
     $('#gDes').addEventListener('change', () => { if ($('#gDes').value) $('#gEst').value = 'fechado'; });
     $('#fg').onsubmit = async (e) => {
       e.preventDefault();
+      pararDitado();
       const resp = $('#gResp').value.trim();
       const b = [...verificarTexto(resp).bloqueios, ...verificarTexto($('#gDesN').value).bloqueios];
       if (b.length) { $('#gErr').textContent = 'Remova: ' + b.join(', ') + '.'; return; }
@@ -953,7 +1003,16 @@ async function arrancar() {
   st.session = session;
   await carregarUnidades();
   if (recuperacao || location.hash.startsWith('#/nova-password')) { if (session) return ecraNovaPassword(); }
-  if (!session) { st.perfil = null; return ecraAuth(); }
+  const qs = new URLSearchParams(location.search + '&' + location.hash.replace(/^#\/?[^?&]*[?&]?/, ''));
+  const errDesc = qs.get('error_description');
+  if (errDesc) history.replaceState(null, '', location.pathname + (location.hash.startsWith('#/') ? location.hash.split('?')[0] : ''));
+  if (!session) {
+    st.perfil = null;
+    if (errDesc) return ecraAuth('entrar', /expired|invalid/i.test(errDesc)
+      ? 'A ligação de confirmação já não é válida (expirou ou já foi usada). Tente entrar com o email e palavra-passe; se a conta ainda não estiver confirmada, use "Recuperar acesso" para receber nova ligação.'
+      : 'Erro na ligação recebida por email: ' + esc(errDesc));
+    return ecraAuth();
+  }
   st.perfilErro = null;
   try { await carregarPerfil(); } catch (e) { st.perfil = null; st.perfilErro = e?.message || String(e); console.error(e); }
   if (!st.perfil || !st.perfil.aprovado || !st.perfil.ativo) return ecraPendente();
