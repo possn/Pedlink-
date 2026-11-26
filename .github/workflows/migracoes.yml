@@ -23,6 +23,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${DB_URL:-}" ]; then echo "::error::Falta o segredo SUPABASE_DB_URL no repositório"; exit 1; fi
+          # limpar erros comuns ao copiar no telemóvel: espaços/quebras de linha e os [ ] de [YOUR-PASSWORD]
+          DB_URL=$(printf '%s' "$DB_URL" | tr -d '[:space:]' | tr -d '[]')
+          echo "::add-mask::$DB_URL"
           psql --version
           psql "$DB_URL" -v ON_ERROR_STOP=1 -q -c "create schema if not exists private; create table if not exists private.migracoes (nome text primary key, aplicada_em timestamptz not null default now());"
           for f in $(ls supabase/migrations/*.sql | sort); do
