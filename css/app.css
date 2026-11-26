@@ -178,3 +178,4 @@ input[type=checkbox], input[type=radio] { width: auto; accent-color: var(--brand
 .mic { flex: none; padding: 4px 10px; }
 .mic.on { background: var(--urg); border-color: var(--urg); color: #fff; animation: pulse 1.2s infinite; }
 @keyframes pulse { 50% { opacity: .7; } }
+.mic.on.ouvir { animation: pulse .8s infinite; }

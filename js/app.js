@@ -98,15 +98,66 @@ function verificarTexto(t) {
 
 // Ditado por voz (Web Speech API: Safari iOS 14.5+, Chrome, Edge)
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let ditado = null; // { rec, alvo, btn }
+let ditado = null; // { rec, alvo, btn, base, ouviu, timer, inicio }
+const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 function botaoDitar(alvoId) {
   return SR ? `<button type="button" class="btn secondary small mic" data-ditar="${alvoId}">${icon('mic')} <span>Ditar</span></button>` : '';
 }
-function pararDitado() {
+function limparDitado(txt) {
+  return txt.replace(/\s*\b(ponto final|ponto)\b/gi, '.').replace(/\s*\bvírgula\b/gi, ',').replace(/\s*\b(nova linha|parágrafo)\b\s*/gi, '\n');
+}
+function juntarDitado(antes, txt) {
+  txt = limparDitado(txt.trim());
+  if (!txt) return antes;
+  const sep = !antes || /[\s\n]$/.test(antes) ? '' : ' ';
+  if (!antes || /[.!?\n]\s*$/.test(antes)) txt = txt.charAt(0).toUpperCase() + txt.slice(1);
+  return antes + sep + txt;
+}
+function pararDitado(aviso) {
   if (!ditado) return;
   const d = ditado; ditado = null;
-  try { d.rec.stop(); } catch { /* ignore */ }
-  d.btn.classList.remove('on'); d.btn.querySelector('span').textContent = 'Ditar';
+  clearTimeout(d.timer);
+  try { d.rec && d.rec.stop(); } catch { /* ignore */ }
+  d.btn.classList.remove('on', 'ouvir'); d.btn.querySelector('span').textContent = 'Ditar';
+  if (aviso) toast(aviso, true);
+}
+const AVISO_TECLADO = IOS
+  ? 'O ditado não respondeu. No iPhone use o microfone 🎤 do teclado: toque no campo e depois no 🎤 junto à barra de espaço.'
+  : 'O ditado não respondeu. Verifique a permissão do microfone ou escreva o texto.';
+function sessaoDitado(d) {
+  const rec = new SR();
+  rec.lang = 'pt-PT';
+  rec.continuous = !IOS;      // Safari iOS é instável em modo contínuo: frases curtas com reinício automático
+  rec.interimResults = true;  // Safari iOS por vezes só entrega resultados intermédios
+  d.rec = rec; d.base = d.alvo.value;
+  const max = d.alvo.maxLength > 0 ? d.alvo.maxLength : undefined;
+  rec.onaudiostart = () => { if (ditado === d) { d.btn.classList.add('ouvir'); d.btn.querySelector('span').textContent = 'A ouvir… Parar'; } };
+  rec.onresult = (ev) => {
+    if (ditado !== d) return;
+    d.ouviu = true; clearTimeout(d.timer);
+    let txt = '';
+    for (let i = 0; i < ev.results.length; i++) txt += ev.results[i][0].transcript + ' ';
+    d.alvo.value = juntarDitado(d.base, txt).slice(0, max);
+    d.alvo.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  rec.onerror = (ev) => {
+    if (ditado !== d) return;
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      pararDitado(IOS && (navigator.standalone || matchMedia('(display-mode: standalone)').matches)
+        ? 'O ditado da app não funciona na app do ecrã principal do iPhone. Use o microfone 🎤 do teclado, ou abra o PedLink no Safari.'
+        : 'Sem permissão para microfone/reconhecimento de voz. Autorize nas Definições (Safari › Microfone) ou use o 🎤 do teclado.');
+    } else if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
+      pararDitado('Ditado interrompido (' + ev.error + '). ' + (IOS ? 'Pode usar o 🎤 do teclado.' : ''));
+    }
+  };
+  rec.onend = () => {
+    if (ditado !== d) return;
+    // fixa o texto reconhecido e, se não carregou em Parar, continua a ouvir
+    d.base = d.alvo.value;
+    if (!d.ouviu && Date.now() - d.inicio > 9000) return pararDitado(AVISO_TECLADO);
+    setTimeout(() => { if (ditado === d) { try { sessaoDitado(d); } catch { pararDitado(AVISO_TECLADO); } } }, 150);
+  };
+  rec.start();
 }
 function ligarDitado(root) {
   if (!SR) return;
@@ -114,30 +165,12 @@ function ligarDitado(root) {
     const alvo = document.getElementById(btn.dataset.ditar);
     if (ditado && ditado.btn === btn) return pararDitado();
     pararDitado();
-    const rec = new SR();
-    rec.lang = 'pt-PT'; rec.continuous = true; rec.interimResults = false;
-    rec.onresult = (ev) => {
-      let txt = '';
-      for (let i = ev.resultIndex; i < ev.results.length; i++) if (ev.results[i].isFinal) txt += ev.results[i][0].transcript;
-      txt = txt.trim();
-      if (!txt) return;
-      txt = txt.replace(/\s+(ponto final|ponto)\b/gi, '.').replace(/\s+vírgula\b/gi, ',').replace(/\s*(nova linha|parágrafo)\s*/gi, '\n');
-      const antes = alvo.value;
-      const sep = !antes || /[\s\n]$/.test(antes) ? '' : ' ';
-      let novo = txt;
-      if (!antes || /[.!?\n]\s*$/.test(antes)) novo = novo.charAt(0).toUpperCase() + novo.slice(1);
-      alvo.value = (antes + sep + novo).slice(0, alvo.maxLength > 0 ? alvo.maxLength : undefined);
-      alvo.dispatchEvent(new Event('input', { bubbles: true }));
-    };
-    rec.onerror = (ev) => {
-      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') toast('Sem permissão para o microfone. Autorize nas definições do browser.', true);
-      else if (ev.error !== 'no-speech' && ev.error !== 'aborted') toast('Ditado interrompido: ' + ev.error, true);
-    };
-    rec.onend = () => { if (ditado && ditado.rec === rec) pararDitado(); };
-    ditado = { rec, alvo, btn };
+    alvo.blur(); // no iPhone o teclado aberto compete pelo microfone
+    const d = { alvo, btn, ouviu: false, inicio: Date.now() };
+    ditado = d;
     btn.classList.add('on'); btn.querySelector('span').textContent = 'Parar';
-    alvo.focus();
-    try { rec.start(); } catch (err) { pararDitado(); toast('Não foi possível iniciar o ditado.', true); }
+    d.timer = setTimeout(() => { if (ditado === d && !d.ouviu) pararDitado(AVISO_TECLADO); }, 10000);
+    try { sessaoDitado(d); } catch { pararDitado('Não foi possível iniciar o ditado. ' + (IOS ? 'Use o 🎤 do teclado.' : '')); }
   });
 }
 
@@ -522,7 +555,7 @@ async function vistaFormCaso(v, id) {
       </div>
       ${(isPed() || !st.perfil.unidade_id) ? `<div class="field"><label for="c_unid">Unidade de origem</label><select id="c_unid" required>${opcoesUnidades(c.unidade_id)}</select></div>` : ''}
       <h2 style="margin-top:8px">Caso clínico</h2>
-      ${SR ? `<div class="alert info small">${icon('mic')} Pode <b>ditar</b> em vez de escrever: toque em "Ditar" ao lado de cada campo e fale. O texto é convertido pelo reconhecimento de voz do telemóvel/browser, por isso não dite nomes nem números identificativos.</div>` : ''}
+      ${SR ? `<div class="alert info small">${icon('mic')} Pode <b>ditar</b> em vez de escrever: toque em "Ditar" ao lado de cada campo e fale (no iPhone também pode usar o 🎤 do teclado). O texto é convertido pelo reconhecimento de voz do telemóvel/browser, por isso não dite nomes nem números identificativos.</div>` : ''}
       <div class="field"><div class="labelrow"><label for="c_motivo">Motivo da discussão <span class="hint">(1 linha)</span></label>${botaoDitar('c_motivo')}</div>
         <input id="c_motivo" data-k="motivo" maxlength="300" required value="${esc(c.motivo)}" placeholder="Ex.: Sopro cardíaco em criança assintomática"><div class="fielderr" id="e_motivo"></div></div>
       ${campoTexto('historia', 'História clínica', '(antecedentes, evolução, curva de crescimento)', 6, false, 8000)}
