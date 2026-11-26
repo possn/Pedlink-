@@ -1,0 +1,18 @@
+name: Diagnóstico API pública
+
+# Verifica o que um visitante sem sessão (ecrã de registo) consegue ler. Só contagens, sem dados pessoais.
+on:
+  workflow_dispatch:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ler unidades como visitante anónimo
+        run: |
+          U=https://zkbnhyzxuymcowfepsdz.supabase.co
+          K=sb_publishable_2a7FoCqbk1vpk9WwXba0rg_F-Hl2On2
+          for q in "aces?select=id" "unidades?select=id" "unidades?select=id,aces(nome)"; do
+            code=$(curl -s -o /tmp/r.json -w '%{http_code}' "$U/rest/v1/$q" -H "apikey: $K")
+            echo "$q -> HTTP $code, linhas: $(python3 -c 'import json;d=json.load(open("/tmp/r.json"));print(len(d) if isinstance(d,list) else d)')"
+          done
