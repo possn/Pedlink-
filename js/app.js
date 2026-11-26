@@ -242,12 +242,12 @@ function ecraAuth(modo = 'entrar', aviso = '') {
       <div class="field" id="campoUnid"><label for="ru">Unidade de saúde</label><select id="ru" required>${opcoesUnidades(null)}</select>
         <div class="muted small">Não encontra a sua unidade? Escolha a mais próxima e peça ao administrador para a corrigir.</div></div>
       <div class="field" id="campoServ" hidden><label for="rs">Hospital / serviço</label><input id="rs" maxlength="120" placeholder="Serviço de Pediatria, Hospital …"></div>
-      <div class="alert info small" id="avisoPed" hidden>Contas de pediatra ficam pendentes até aprovação por um administrador do projeto.</div>
+      <div class="alert info small">A conta fica pendente até ser aprovada por um administrador do projeto.</div>
       <button class="btn" style="width:100%">Criar conta</button></form>`;
     const sync = () => {
       const ped = $('input[name=papel]:checked').value === 'pediatra';
       $('#campoUnid').hidden = ped; $('#ru').required = !ped;
-      $('#campoServ').hidden = !ped; $('#avisoPed').hidden = !ped;
+      $('#campoServ').hidden = !ped;
     };
     $$('input[name=papel]').forEach(r => r.onchange = sync);
     $('#fr').onsubmit = async (e) => {
@@ -266,7 +266,8 @@ function ecraAuth(modo = 'entrar', aviso = '') {
           },
         });
         if (error) throw error;
-        ecraAuth('entrar', 'Conta criada. Enviámos um email de confirmação: abra a ligação e depois entre aqui.');
+        { const { data: sess } = await sb.auth.getSession(); if (sess?.session) { arrancar(); return; } }
+        ecraAuth('entrar', 'Conta criada. Se receber um email de confirmação, abra a ligação; depois entre aqui. O acesso fica ativo quando um administrador aprovar.');
       } catch (err) { toast(erroMsg(err), true); btn.disabled = false; }
     };
   }
