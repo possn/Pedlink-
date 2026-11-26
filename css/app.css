@@ -198,3 +198,9 @@ select { min-width: 0; text-overflow: ellipsis; }
   .labelrow { align-items: center; }
   .labelrow label { min-width: 0; }
 }
+
+.ditlog { font-size: .72rem; color: var(--muted); margin-top: 3px; }
+/* iPhone: campos com menos de 16px fazem o Safari ampliar a página ao tocar, que depois fica a deslizar */
+
+html, body { overflow-x: clip; }
+@media (max-width: 860px) { input, select, textarea { font-size: 16px; } }

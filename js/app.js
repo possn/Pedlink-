@@ -104,7 +104,8 @@ function botaoDitar(alvoId) {
   return SR ? `<button type="button" class="btn secondary small mic" data-ditar="${alvoId}">${icon('mic')} <span>Ditar</span></button>` : '';
 }
 function limparDitado(txt) {
-  return txt.replace(/\s*\b(ponto final|ponto)\b/gi, '.').replace(/\s*\bvírgula\b/gi, ',').replace(/\s*\b(nova linha|parágrafo)\b\s*/gi, '\n');
+  txt = txt.replace(/\s*\b(ponto final|ponto)\b/gi, '.').replace(/\s*\bvírgula\b/gi, ',').replace(/\s*\b(nova linha|parágrafo)\b\s*/gi, '\n');
+  return txt.replace(/([.!?]\s+|\n)(\p{Ll})/gu, (m, p1, l) => p1 + l.toUpperCase());
 }
 function juntarDitado(antes, txt) {
   txt = limparDitado(txt.trim());
@@ -113,19 +114,28 @@ function juntarDitado(antes, txt) {
   if (!antes || /[.!?\n]\s*$/.test(antes)) txt = txt.charAt(0).toUpperCase() + txt.slice(1);
   return antes + sep + txt;
 }
-// Um único motor de reconhecimento para toda a app: o Safari iOS só aceita um ativo de cada vez
-// e, se se cria outro antes de o anterior libertar o microfone, o segundo fica mudo.
-let motor = null, motorAtivo = false, motorSessao = 0;
+// Um único motor de reconhecimento, em modo contínuo, para todo o formulário.
+// No Safari iOS só a primeira ativação da página é fiável; por isso, ao mudar de campo,
+// o motor NÃO é parado: o texto que vai chegando passa simplesmente a ser escrito no campo novo.
+let motor = null, motorAtivo = false, ultimoFull = '', ultimoN = 0;
 function uiDitado(d, estado) {
   d.btn.classList.toggle('on', estado !== 'off'); d.btn.classList.toggle('ouvir', estado === 'ouvir');
   d.btn.querySelector('span').textContent = estado === 'off' ? 'Ditar' : 'Parar';
+}
+function traco(d, ev) {
+  if (!d) return;
+  d.trace.push(ev);
+  let el = d.alvo.parentElement.querySelector('.ditlog');
+  if (!el) { el = document.createElement('div'); el.className = 'ditlog'; d.alvo.insertAdjacentElement('afterend', el); }
+  el.textContent = 'Ditado: ' + d.trace.slice(-8).join(' → ');
 }
 function pararDitado(aviso) {
   if (!ditado) return;
   const d = ditado; ditado = null;
   clearTimeout(d.timer);
-  if (motor && motorAtivo) { try { motor.abort(); } catch { /* ignore */ } }
+  if (motor && motorAtivo) { try { motor.stop(); } catch { /* ignore */ } }
   uiDitado(d, 'off');
+  traco(d, 'parado');
   if (aviso) toast(aviso, true);
 }
 const AVISO_TECLADO = IOS
@@ -135,21 +145,29 @@ function obterMotor() {
   if (motor) return motor;
   motor = new SR();
   motor.lang = 'pt-PT';
-  motor.continuous = !IOS;      // Safari iOS é instável em modo contínuo: frases curtas com reinício automático
-  motor.interimResults = true;  // Safari iOS por vezes só entrega resultados intermédios
-  motor.onaudiostart = () => { if (ditado) uiDitado(ditado, 'ouvir'); };
+  motor.continuous = true;
+  motor.interimResults = true;  // o Safari iOS por vezes só entrega resultados intermédios
+  motor.onstart = () => { ultimoFull = ''; ultimoN = 0; if (ditado) { ditado.prefixo = ''; ditado.desde = 0; ditado.base = ditado.alvo.value; } traco(ditado, 'início'); };
+  motor.onaudiostart = () => { if (ditado) uiDitado(ditado, 'ouvir'); traco(ditado, 'microfone'); };
+  motor.onspeechstart = () => traco(ditado, 'voz');
+  motor.onnomatch = () => traco(ditado, 'não percebido');
   motor.onresult = (ev) => {
+    const partes = [];
+    for (let i = 0; i < ev.results.length; i++) partes.push(ev.results[i][0].transcript.trim());
+    const full = partes.join(' ');
+    ultimoFull = full; ultimoN = ev.results.length;
     const d = ditado;
-    if (!d || d.sessao !== motorSessao) return;
+    if (!d) return;
+    if (!d.ouviu) traco(d, 'texto');
     d.ouviu = true; clearTimeout(d.timer);
-    let txt = '';
-    for (let i = 0; i < ev.results.length; i++) txt += ev.results[i][0].transcript + ' ';
-    d.alvo.value = juntarDitado(d.base, txt).slice(0, d.alvo.maxLength > 0 ? d.alvo.maxLength : undefined);
+    const seg = d.prefixo && full.startsWith(d.prefixo) ? full.slice(d.prefixo.length) : partes.slice(d.desde).join(' ');
+    d.alvo.value = juntarDitado(d.base, seg).slice(0, d.alvo.maxLength > 0 ? d.alvo.maxLength : undefined);
     d.alvo.dispatchEvent(new Event('input', { bubbles: true }));
   };
   motor.onerror = (ev) => {
     const d = ditado;
-    if (!d || d.sessao !== motorSessao) return;
+    traco(d, 'erro ' + ev.error);
+    if (!d) return;
     if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
       pararDitado(IOS && (navigator.standalone || matchMedia('(display-mode: standalone)').matches)
         ? 'O ditado da app não funciona na app do ecrã principal do iPhone. Use o microfone 🎤 do teclado, ou abra o PedLink no Safari.'
@@ -161,19 +179,20 @@ function obterMotor() {
   motor.onend = () => {
     motorAtivo = false;
     const d = ditado;
+    traco(d, 'fim');
     if (!d) return;
-    if (d.sessao === motorSessao && !d.ouviu && Date.now() - d.inicio > 9000) return pararDitado(AVISO_TECLADO);
-    setTimeout(arrancarMotor, 150); // continua a ouvir (ou arranca no campo novo) até carregar em Parar
+    if (!d.ouviu && Date.now() - d.inicio > 9000) return pararDitado(AVISO_TECLADO);
+    setTimeout(arrancarMotor, 200); // o motor parou sozinho (silêncio): volta a ouvir até carregar em Parar
   };
   return motor;
 }
 function arrancarMotor() {
   const d = ditado;
   if (!d || motorAtivo) return;
-  d.base = d.alvo.value; d.sessao = ++motorSessao;
+  d.base = d.alvo.value; d.prefixo = ''; d.desde = 0;
   motorAtivo = true;
   try { obterMotor().start(); }
-  catch { motorAtivo = false; pararDitado('Não foi possível iniciar o ditado. ' + (IOS ? 'Use o 🎤 do teclado.' : '')); }
+  catch (err) { motorAtivo = false; traco(d, 'falhou ' + (err.name || '')); pararDitado('Não foi possível iniciar o ditado. ' + (IOS ? 'Use o 🎤 do teclado.' : '')); }
 }
 function ligarDitado(root) {
   if (!SR) return;
@@ -181,16 +200,14 @@ function ligarDitado(root) {
     const alvo = document.getElementById(btn.dataset.ditar);
     if (ditado && ditado.btn === btn) return pararDitado();
     if (ditado) { clearTimeout(ditado.timer); uiDitado(ditado, 'off'); }
-    alvo.blur(); // no iPhone o teclado aberto compete pelo microfone
-    const d = { alvo, btn, ouviu: false, inicio: Date.now(), sessao: -1 };
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); // teclado aberto compete pelo microfone
+    const anterior = ditado;
+    const d = { alvo, btn, ouviu: false, inicio: Date.now(), trace: [], base: alvo.value, prefixo: ultimoFull, desde: ultimoN };
     ditado = d;
-    uiDitado(d, 'on');
-    d.timer = setTimeout(() => { if (ditado === d && !d.ouviu) pararDitado(AVISO_TECLADO); }, 10000);
-    if (motorAtivo) {
-      // muda de campo: liberta o motor e só depois volta a arrancar (no onend); salvaguarda se o onend não vier
-      try { motor.abort(); } catch { /* ignore */ }
-      setTimeout(() => { if (ditado === d && d.sessao === -1) { motorAtivo = false; arrancarMotor(); } }, 900);
-    } else arrancarMotor();
+    uiDitado(d, motorAtivo ? 'ouvir' : 'on');
+    d.timer = setTimeout(() => { if (ditado === d && !d.ouviu) pararDitado(AVISO_TECLADO); }, 12000);
+    if (motorAtivo) { traco(d, anterior ? 'mudou de campo' : 'a continuar'); }
+    else arrancarMotor();
   });
 }
 
@@ -410,7 +427,7 @@ function shell() {
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
         <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 13</div></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
