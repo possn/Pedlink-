@@ -7,6 +7,13 @@
 <p class="muted">Cada bloco: tocar em <b>Copiar</b> → abrir o <a href="https://supabase.com/dashboard/project/zkbnhyzxuymcowfepsdz/sql/new" target="_blank" rel="noopener">SQL Editor</a> → manter premido → <b>Colar</b> → <b>Run</b>.</p>
 
 <div class="card">
+  <h2>Carregar unidades da ULS Amadora/Sintra</h2>
+  <p class="small muted">27 USF e 10 UCSP (Amadora e Sintra), segundo o Relatório de Acesso 2024 da ULS. Remove as unidades "Exemplo".</p>
+  <button class="btn" data-copy="ulsasi" style="width:100%;justify-content:center">Copiar SQL das unidades</button>
+  <p class="small muted" data-st="ulsasi" style="margin-top:8px"></p>
+</div>
+
+<div class="card">
   <h2>Aprovar-me como administrador</h2>
   <p class="small muted">Funciona enquanto fores a única conta registada.</p>
   <button class="btn" data-copy="unico" style="width:100%;justify-content:center">Copiar SQL de aprovação</button>
@@ -31,9 +38,10 @@
 <script>
 const files = {};
 const get = (f) => files[f] ??= fetch(f, { cache: 'no-store' }).then(r => r.text());
-get('supabase/02-permissoes.sql'); get('supabase/schema.sql');
+get('supabase/02-permissoes.sql'); get('supabase/schema.sql'); get('supabase/03-unidades-ulsasi.sql');
 async function texto(k) {
   if (k === 'schema') return get('supabase/schema.sql');
+  if (k === 'ulsasi') return get('supabase/03-unidades-ulsasi.sql');
   if (k === 'unico') return "update public.perfis set papel='pediatra', is_admin=true, aprovado=true, ativo=true where (select count(*) from public.perfis) = 1;\nselect nome, email, is_admin, aprovado from public.perfis;\n";
   const email = document.getElementById('em').value.trim().toLowerCase().replace(/'/g, '');
   let t = await get('supabase/02-permissoes.sql');
