@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-PT"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PedLink · Instalação</title><meta name="robots" content="noindex">
+<link rel="stylesheet" href="css/app.css"></head>
+<body><main class="main" style="margin:0 auto;max-width:640px">
+<h1>Instalar a base de dados</h1>
+<div class="card">
+  <p><b>1.</b> Toca em <b>Copiar SQL</b>.</p>
+  <button class="btn" id="copy" style="width:100%;justify-content:center">Copiar SQL</button>
+  <p class="small muted" id="st" style="margin-top:8px">A carregar o ficheiro…</p>
+  <p><b>2.</b> Abre o <a href="https://supabase.com/dashboard/project/zkbnhyzxuymcowfepsdz/sql/new" target="_blank" rel="noopener">SQL Editor</a>, toca no editor, mantém premido → <b>Colar</b> → <b>Run</b>.</p>
+  <p class="small muted">Se não conseguires colar, apaga o texto que estiver no editor primeiro. Se aparecer um aviso de "destructive operations", confirma: só remove regras antigas, não dados.</p>
+</div>
+<details class="card"><summary>Ver o SQL</summary><textarea id="sql" readonly style="min-height:300px;font:12px monospace"></textarea></details>
+</main>
+<script>
+let txt = '';
+fetch('supabase/schema.sql', { cache: 'no-store' }).then(r => r.text()).then(t => {
+  txt = t; document.getElementById('sql').value = t;
+  document.getElementById('st').textContent = `Pronto (${t.split('\n').length} linhas).`;
+});
+document.getElementById('copy').onclick = async () => {
+  const st = document.getElementById('st');
+  try { await navigator.clipboard.writeText(txt); }
+  catch { const ta = document.getElementById('sql'); ta.closest('details').open = true; ta.select(); ta.setSelectionRange(0, txt.length); document.execCommand('copy'); }
+  st.textContent = 'Copiado ✓ Agora cola no SQL Editor.';
+};
+</script></body></html>
