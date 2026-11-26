@@ -118,7 +118,7 @@ function juntarDitado(antes, txt) {
 let motor = null, motorAtivo = false, motorSessao = 0;
 function uiDitado(d, estado) {
   d.btn.classList.toggle('on', estado !== 'off'); d.btn.classList.toggle('ouvir', estado === 'ouvir');
-  d.btn.querySelector('span').textContent = estado === 'off' ? 'Ditar' : estado === 'ouvir' ? 'A ouvir… Parar' : 'Parar';
+  d.btn.querySelector('span').textContent = estado === 'off' ? 'Ditar' : 'Parar';
 }
 function pararDitado(aviso) {
   if (!ditado) return;
@@ -939,7 +939,7 @@ function aplicarTema() { const t = localStorageGet('tema'); if (t) document.docu
 // ---------------------------------------------------------------------------
 async function vistaAdmin(v, tab) {
   v.innerHTML = `<h1>Administração</h1>
-    <div class="tabs">${[['utilizadores', 'Utilizadores'], ['unidades', 'ACES e unidades'], ['emails', 'Emails autorizados'], ['estatisticas', 'Estatísticas']]
+    <div class="tabs">${[['utilizadores', 'Utilizadores'], ['unidades', 'ACES e unidades'], ['emails', 'Emails autorizados'], ['estatisticas', 'Estatísticas'], ['testes', 'Dados de teste']]
       .map(([k, t]) => `<button data-t="${k}" class="${tab === k ? 'active' : ''}">${t}</button>`).join('')}</div><div id="adm"></div>`;
   $$('.tabs button', v).forEach(b => b.onclick = () => { location.hash = '#/admin/' + b.dataset.t; });
   const a = $('#adm');
@@ -947,6 +947,37 @@ async function vistaAdmin(v, tab) {
   if (tab === 'unidades') return adminUnidades(a);
   if (tab === 'emails') return adminEmails(a);
   if (tab === 'estatisticas') return adminEstatisticas(a);
+  if (tab === 'testes') return adminTestes(a);
+}
+
+async function adminTestes(a) {
+  const { count } = await sb.from('casos').select('id', { count: 'exact', head: true });
+  a.innerHTML = `<section class="card"><h2>Apagar casos de teste</h2>
+    <p>Existem <b>${count ?? 0}</b> caso(s) na plataforma. Esta ação apaga <b>todos</b> os casos, mensagens, imagens e notificações associadas, e recomeça a numeração em PL-${new Date().getFullYear()}-0001.</p>
+    <div class="alert warn">Use apenas na fase de testes, antes de abrir a plataforma aos colegas. Não pode ser desfeito. Utilizadores, unidades e documentos não são apagados.</div>
+    <div class="field"><label for="tConf">Para confirmar escreva APAGAR</label><input id="tConf" autocomplete="off" autocapitalize="characters"></div>
+    <button class="btn danger" id="tApagar" disabled>Apagar todos os casos</button></section>`;
+  const inp = $('#tConf'), btn = $('#tApagar');
+  inp.oninput = () => { btn.disabled = inp.value.trim().toUpperCase() !== 'APAGAR'; };
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = 'A apagar…';
+    try {
+      const { data: anx, error: e1 } = await sb.from('anexos').select('path');
+      if (e1) throw e1;
+      const paths = (anx || []).map(x => x.path);
+      for (let i = 0; i < paths.length; i += 100) {
+        const { error } = await sb.storage.from('anexos').remove(paths.slice(i, i + 100));
+        if (error) throw error;
+      }
+      const { data: n, error: e2 } = await sb.rpc('apagar_todos_casos');
+      if (e2) throw e2;
+      toast(`${n} caso(s) apagado(s). A numeração recomeça em 0001.`);
+      adminTestes(a);
+    } catch (err) {
+      toast('Não foi possível apagar: ' + (err.message || err), true);
+      btn.textContent = 'Apagar todos os casos'; btn.disabled = false;
+    }
+  };
 }
 
 async function adminUtilizadores(a) {

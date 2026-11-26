@@ -33,7 +33,7 @@ p { margin: 0 0 .75em; }
 .splash { min-height: 100vh; display: grid; place-content: center; text-align: center; color: var(--muted); }
 
 /* layout */
-.shell { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
+.shell { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 100vh; }
 .sidebar { background: var(--surface); border-right: 1px solid var(--line); padding: 18px 12px calc(18px + env(safe-area-inset-bottom)); position: sticky; top: 0; height: 100vh; height: 100dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 10px 16px; font-weight: 700; font-size: 1.15rem; color: var(--text); text-decoration: none; }
 .brand img { width: 34px; height: 34px; }
@@ -47,7 +47,7 @@ p { margin: 0 0 .75em; }
 .topbar { display: none; }
 .scrim { display: none; }
 @media (max-width: 860px) {
-  .shell { grid-template-columns: 1fr; }
+  .shell { grid-template-columns: minmax(0, 1fr); }
   .sidebar { position: fixed; z-index: 40; left: 0; top: 0; width: 270px; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }
   .shell.open .sidebar { transform: none; }
   .shell.open .scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 30; }
@@ -176,6 +176,25 @@ input[type=checkbox], input[type=radio] { width: auto; accent-color: var(--brand
 .labelrow { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; margin-bottom: 4px; }
 .labelrow label { margin-bottom: 0; }
 .mic { flex: none; padding: 4px 10px; }
-.mic.on { background: var(--urg); border-color: var(--urg); color: #fff; animation: pulse 1.2s infinite; }
+.btn.mic.on, .btn.mic.on:hover { background: var(--urg); border-color: var(--urg); color: #fff; animation: pulse 1.2s infinite; }
 @keyframes pulse { 50% { opacity: .7; } }
-.mic.on.ouvir { animation: pulse .8s infinite; }
+.btn.mic.on.ouvir { animation: pulse .8s infinite; }
+
+/* telemóvel: nada pode alargar a página para além do ecrã */
+.main { min-width: 0; }
+.main h1 { overflow-wrap: anywhere; }
+select { min-width: 0; text-overflow: ellipsis; }
+.filters > *, .stats > *, .grid2 > * { min-width: 0; }
+.row > h1, .row > div { min-width: 0; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.case { overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .stats { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { padding: 10px 12px; }
+  .filters { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .filters input[type=search], .filters input:not([type=checkbox]) { grid-column: 1 / -1; }
+  h1 { font-size: 1.45rem; }
+  .card { padding: 14px; }
+  .labelrow { align-items: center; }
+  .labelrow label { min-width: 0; }
+}
