@@ -186,15 +186,22 @@ async function carregarPerfil() {
   st.perfil = data;
 }
 
-function opcoesUnidades(selecionada, { apenasAtivas = true, vazio = 'Selecione a unidade…' } = {}) {
+function opcoesUnidades(selecionada, { apenasAtivas = true, vazio = 'Selecione a unidade…', hospitais = false } = {}) {
   let html = `<option value="">${esc(vazio)}</option>`;
   for (const a of st.aces) {
-    const us = st.unidades.filter(u => u.aces_id === a.id && (!apenasAtivas || u.ativo || u.id === selecionada));
+    const us = st.unidades.filter(u => u.aces_id === a.id && (!apenasAtivas || u.ativo || u.id === selecionada)
+      && ((u.tipo === 'Hospital') === hospitais));
     if (!us.length) continue;
     html += `<optgroup label="${esc(a.nome)}">` + us.map(u =>
       `<option value="${u.id}" ${u.id === selecionada ? 'selected' : ''}>${esc(unidadeTxt(u))}${u.centro_saude ? ' — ' + esc(u.centro_saude) : ''}</option>`).join('') + '</optgroup>';
   }
   return html;
+}
+
+function opcoesHospitais(selecionado) {
+  const hs = st.unidades.filter(u => u.tipo === 'Hospital' && u.ativo);
+  return hs.map(u => `<option value="${u.id}" ${u.id === selecionado || (!selecionado && hs[0] === u) ? 'selected' : ''}>${esc(u.nome)}</option>`).join('')
+    + `<option value="outro" ${hs.length === 0 ? 'selected' : ''}>Outro hospital…</option>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,14 +248,20 @@ function ecraAuth(modo = 'entrar', aviso = '') {
         </div></div>
       <div class="field" id="campoUnid"><label for="ru">Unidade de saúde</label><select id="ru" required>${opcoesUnidades(null)}</select>
         <div class="muted small">Não encontra a sua unidade? Escolha a mais próxima e peça ao administrador para a corrigir.</div></div>
-      <div class="field" id="campoServ" hidden><label for="rs">Hospital / serviço</label><input id="rs" maxlength="120" placeholder="Serviço de Pediatria, Hospital …"></div>
+      <div id="campoServ" hidden>
+        <div class="field"><label for="rh">Hospital</label><select id="rh">${opcoesHospitais(null)}</select></div>
+        <div class="field" id="campoOutroH" hidden><label for="rho">Nome do hospital</label><input id="rho" maxlength="120"></div>
+        <div class="field"><label for="rs">Serviço / área <span class="hint">(opcional)</span></label><input id="rs" maxlength="120" placeholder="Pediatria, Neonatologia, Cardiologia Pediátrica…"></div>
+      </div>
       <div class="alert info small">A conta fica pendente até ser aprovada por um administrador do projeto.</div>
       <button class="btn" style="width:100%">Criar conta</button></form>`;
     const sync = () => {
       const ped = $('input[name=papel]:checked').value === 'pediatra';
       $('#campoUnid').hidden = ped; $('#ru').required = !ped;
       $('#campoServ').hidden = !ped;
+      $('#campoOutroH').hidden = !(ped && $('#rh').value === 'outro'); $('#rho').required = ped && $('#rh').value === 'outro';
     };
+    $('#rh').onchange = sync;
     $$('input[name=papel]').forEach(r => r.onchange = sync);
     $('#fr').onsubmit = async (e) => {
       e.preventDefault();
@@ -258,11 +271,14 @@ function ecraAuth(modo = 'entrar', aviso = '') {
         const { data: ok } = await sb.rpc('email_permitido', { e: email });
         if (ok === false) throw new Error('Registo permitido apenas com email institucional (@…min-saude.pt).');
         const papel = $('input[name=papel]:checked').value;
+        const hId = papel === 'pediatra' && $('#rh').value && $('#rh').value !== 'outro' ? $('#rh').value : null;
+        const hNome = papel !== 'pediatra' ? '' : hId ? unidadeTxt(st.unidades.find(u => u.id === hId)) : $('#rho').value.trim();
+        const serv = papel === 'pediatra' ? [$('#rs').value.trim(), hNome].filter(Boolean).join(' · ') : null;
         const { error } = await sb.auth.signUp({
           email, password: $('#rp').value,
           options: {
             emailRedirectTo: location.origin + location.pathname,
-            data: { nome: $('#rn').value.trim(), papel, unidade_id: papel === 'mgf' ? $('#ru').value : null, servico: papel === 'pediatra' ? $('#rs').value.trim() : null },
+            data: { nome: $('#rn').value.trim(), papel, unidade_id: papel === 'mgf' ? $('#ru').value : hId, servico: serv },
           },
         });
         if (error) throw error;
@@ -831,7 +847,8 @@ async function vistaPerfil(v) {
       <div class="field"><label>Email</label><input value="${esc(p.email)}" disabled></div>
       <div class="field"><label for="pfN">Nome profissional</label><input id="pfN" value="${esc(p.nome)}" required maxlength="120"></div>
       ${p.papel === 'mgf' ? `<div class="field"><label for="pfU">Unidade de saúde</label><select id="pfU" required>${opcoesUnidades(p.unidade_id)}</select></div>`
-      : `<div class="field"><label for="pfS">Hospital / serviço</label><input id="pfS" value="${esc(p.servico)}" maxlength="120"></div>`}
+      : `<div class="field"><label for="pfH">Hospital</label><select id="pfH"><option value="">—</option>${opcoesHospitais(p.unidade_id).replace(/<option value="outro"[^>]*>[^<]*<\/option>/, '')}</select></div>
+         <div class="field"><label for="pfS">Hospital / serviço <span class="hint">(texto mostrado aos colegas)</span></label><input id="pfS" value="${esc(p.servico)}" maxlength="120"></div>`}
       <div class="field"><label for="pfT">Contacto profissional <span class="hint">(opcional, visível aos colegas pediatras)</span></label><input id="pfT" value="${esc(p.telefone_prof)}" maxlength="60"></div>
       <button class="btn">Guardar</button>
     </form>
@@ -845,7 +862,7 @@ async function vistaPerfil(v) {
   $('#fpf').onsubmit = async (e) => {
     e.preventDefault();
     const upd = { nome: $('#pfN').value.trim(), telefone_prof: $('#pfT').value.trim() || null };
-    if ($('#pfU')) upd.unidade_id = $('#pfU').value; if ($('#pfS')) upd.servico = $('#pfS').value.trim() || null;
+    if ($('#pfU')) upd.unidade_id = $('#pfU').value; if ($('#pfS')) upd.servico = $('#pfS').value.trim() || null; if ($('#pfH')) upd.unidade_id = $('#pfH').value || null;
     const { error } = await sb.from('perfis').update(upd).eq('id', p.id);
     if (error) return toast(erroMsg(error), true);
     await carregarPerfil(); shell(); route(); toast('Perfil atualizado.');
