@@ -25,6 +25,15 @@ jobs:
           if [ -z "${DB_URL:-}" ]; then echo "::error::Falta o segredo SUPABASE_DB_URL no repositório"; exit 1; fi
           # limpar erros comuns ao copiar no telemóvel: espaços/quebras de linha e os [ ] de [YOUR-PASSWORD]
           DB_URL=$(printf '%s' "$DB_URL" | tr -d '[:space:]' | tr -d '[]')
+          # codificar caracteres especiais da password (@ : / # ? %) — separa no ÚLTIMO @
+          DB_URL=$(DB_URL="$DB_URL" python3 -c '
+          import os, urllib.parse as u
+          url = os.environ["DB_URL"]
+          esq, sep, resto = url.partition("://")
+          cred, _, host = resto.rpartition("@")
+          user, _, pw = cred.partition(":")
+          pw = u.quote(u.unquote(pw), safe="")
+          print(f"{esq}{sep}{user}:{pw}@{host}")')
           echo "::add-mask::$DB_URL"
           psql --version
           psql "$DB_URL" -v ON_ERROR_STOP=1 -q -c "create schema if not exists private; create table if not exists private.migracoes (nome text primary key, aplicada_em timestamptz not null default now());"
