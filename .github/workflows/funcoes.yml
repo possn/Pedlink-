@@ -56,11 +56,11 @@ jobs:
             PUB=$(printf '%s' "$KEYS" | python3 -c 'import sys,json; print(json.load(sys.stdin)["publicKey"])')
             PRIV=$(printf '%s' "$KEYS" | python3 -c 'import sys,json; print(json.load(sys.stdin)["privateKey"])')
             echo "::add-mask::$PRIV"
-            supabase secrets set --project-ref "$PROJ" VAPID_PUBLIC="$PUB" VAPID_PRIVATE="$PRIV" PUSH_SEGREDO="$SEG" > /dev/null
+            supabase secrets set --yes --project-ref "$PROJ" VAPID_PUBLIC="$PUB" VAPID_PRIVATE="$PRIV" PUSH_SEGREDO="$SEG" > /dev/null
             psql "$DB_URL" -v ON_ERROR_STOP=1 -q -c "insert into public.config_publica (chave, valor) values ('vapid_public', '$PUB') on conflict (chave) do update set valor = excluded.valor; delete from public.push_subscricoes;"
           else
-            supabase secrets set --project-ref "$PROJ" PUSH_SEGREDO="$SEG" > /dev/null
+            supabase secrets set --yes --project-ref "$PROJ" PUSH_SEGREDO="$SEG" > /dev/null
             echo "Chaves VAPID já existem"
           fi
       - name: Publicar função
-        run: supabase functions deploy push --project-ref "$PROJ" --no-verify-jwt --use-api
+        run: supabase functions deploy push --yes --project-ref "$PROJ" --no-verify-jwt --use-api
