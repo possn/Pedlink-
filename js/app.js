@@ -61,6 +61,11 @@ function icon(name) {
     mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
     escudo: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
     cal: '<rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+    grupo: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.6c2.6.1 4.6 1.8 5.3 4.9"/>',
+    predio: '<path d="M4 21V5l8-2v18M12 8h8v13M2 21h20"/><path d="M7 8h2M7 12h2M7 16h2M15 12h2M15 16h2"/>',
+    email: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+    grafico: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    lixo: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
     cadeado: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   }[name] || '';
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
@@ -459,7 +464,7 @@ function shell() {
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
         <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 17</div></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 18</div></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
@@ -1005,10 +1010,17 @@ function aplicarTema() { const t = localStorageGet('tema'); if (t) document.docu
 // Administração
 // ---------------------------------------------------------------------------
 async function vistaAdmin(v, tab) {
+  const { count: pend } = await sb.from('perfis').select('id', { count: 'exact', head: true }).eq('aprovado', false);
+  const TABS = [
+    ['utilizadores', 'Utilizadores', 'grupo', pend ? `${pend} pendente(s)` : 'Contas e permissões'],
+    ['unidades', 'ACES e unidades', 'predio', 'USF, UCSP e hospital'],
+    ['emails', 'Emails autorizados', 'email', 'Exceções ao domínio'],
+    ['estatisticas', 'Estatísticas', 'grafico', 'Indicadores e Excel'],
+    ['testes', 'Dados de teste', 'lixo', 'Apagar casos de teste'],
+  ];
   v.innerHTML = `<h1>Administração</h1>
-    <div class="tabs">${[['utilizadores', 'Utilizadores'], ['unidades', 'ACES e unidades'], ['emails', 'Emails autorizados'], ['estatisticas', 'Estatísticas'], ['testes', 'Dados de teste']]
-      .map(([k, t]) => `<button data-t="${k}" class="${tab === k ? 'active' : ''}">${t}</button>`).join('')}</div><div id="adm"></div>`;
-  $$('.tabs button', v).forEach(b => b.onclick = () => { location.hash = '#/admin/' + b.dataset.t; });
+    <nav class="admtabs">${TABS.map(([k, t, ic, sub]) => `<a href="#/admin/${k}" class="${tab === k ? 'active' : ''} ${k === 'utilizadores' && pend ? 'alerta' : ''}">
+      <span class="ic">${icon(ic)}</span><span><b>${t}</b><small>${sub}</small></span></a>`).join('')}</nav><div id="adm"></div>`;
   const a = $('#adm');
   if (tab === 'utilizadores') return adminUtilizadores(a);
   if (tab === 'unidades') return adminUnidades(a);
@@ -1051,20 +1063,29 @@ async function adminUtilizadores(a) {
   const { data, error } = await sb.from('perfis').select('*, unidades(nome, tipo)').order('aprovado').order('created_at', { ascending: false });
   if (error) throw error;
   const pend = data.filter(p => !p.aprovado);
+  const iniciais = (n) => (n || '?').split(/\s+/).filter(Boolean).map(x => x[0]).filter(ch => /\p{Lu}/u.test(ch)).slice(0, 2).join('') || (n || '?')[0].toUpperCase();
+  const cartao = (p) => {
+    const eu = p.id === st.perfil.id;
+    const estado = !p.aprovado ? '<span class="badge p-prioritario">Pendente</span>' : p.ativo ? '<span class="badge p-normal">Ativo</span>' : '<span class="badge">Inativo</span>';
+    return `<article class="ucard ${!p.aprovado ? 'pendente' : ''} ${!p.ativo && p.aprovado ? 'inativo' : ''}">
+      <header><span class="avatar ${p.papel}">${esc(iniciais(p.nome))}</span>
+        <div class="who2"><b>${esc(p.nome)}${eu ? ' <span class="muted small">(eu)</span>' : ''}</b><span class="small muted">${esc(p.email)}</span></div>
+        <div class="badges">${estado}${p.is_admin ? '<span class="badge admin">Admin</span>' : ''}</div></header>
+      <div class="small meta2">${p.papel === 'mgf' ? 'MGF · ' + esc(unidadeTxt(p.unidades) || 'sem unidade') : 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '')} · registo ${fmtData(p.created_at)}</div>
+      <div class="ctrls">
+        <select data-papel="${p.id}" ${eu ? 'disabled' : ''} aria-label="Perfil"><option value="mgf" ${p.papel === 'mgf' ? 'selected' : ''}>MGF</option><option value="pediatra" ${p.papel === 'pediatra' ? 'selected' : ''}>Pediatria</option></select>
+        <label class="switch ${eu ? 'dis' : ''}"><input type="checkbox" data-admin="${p.id}" ${p.is_admin ? 'checked' : ''} ${eu ? 'disabled' : ''}><span></span> Administrador</label>
+      </div>
+      ${!eu || !p.aprovado ? `<div class="actions">
+        ${!p.aprovado ? `<button class="btn small" data-aprovar="${p.id}">Aprovar acesso</button>` : ''}
+        ${!eu ? `<button class="btn secondary small" data-ativo="${p.id}" data-v="${!p.ativo}">${p.ativo ? 'Desativar' : 'Reativar'}</button>` : ''}</div>` : ''}
+    </article>`;
+  };
+  const ativos = data.filter(p => p.aprovado);
   a.innerHTML = `
-    ${pend.length ? `<div class="alert warn"><b>${pend.length}</b> pedido(s) de acesso pendente(s).</div>` : ''}
-    <div class="card tablewrap"><table class="table"><thead><tr><th>Nome</th><th>Email</th><th>Perfil</th><th>Unidade / serviço</th><th>Estado</th><th>Ações</th></tr></thead><tbody>
-    ${data.map(p => `<tr>
-      <td><b>${esc(p.nome)}</b><div class="muted small">${fmtData(p.created_at)}</div></td>
-      <td class="small">${esc(p.email)}</td>
-      <td><select data-papel="${p.id}" ${p.id === st.perfil.id ? 'disabled' : ''}><option value="mgf" ${p.papel === 'mgf' ? 'selected' : ''}>MGF</option><option value="pediatra" ${p.papel === 'pediatra' ? 'selected' : ''}>Pediatra</option></select>
-        <label class="check small" style="margin-top:4px"><input type="checkbox" data-admin="${p.id}" ${p.is_admin ? 'checked' : ''} ${p.id === st.perfil.id ? 'disabled' : ''}> admin</label></td>
-      <td class="small">${p.papel === 'mgf' ? esc(unidadeTxt(p.unidades)) : esc(p.servico || '—')}</td>
-      <td>${!p.aprovado ? '<span class="badge p-prioritario">Pendente</span>' : p.ativo ? '<span class="badge p-normal">Ativo</span>' : '<span class="badge">Inativo</span>'}</td>
-      <td><div class="actions" style="margin:0">
-        ${!p.aprovado ? `<button class="btn small" data-aprovar="${p.id}">Aprovar</button>` : ''}
-        ${p.id !== st.perfil.id ? `<button class="btn secondary small" data-ativo="${p.id}" data-v="${!p.ativo}">${p.ativo ? 'Desativar' : 'Reativar'}</button>` : ''}
-      </div></td></tr>`).join('')}</tbody></table></div>`;
+    ${pend.length ? `<h2 class="sec">Pedidos de acesso <span class="badge p-prioritario">${pend.length}</span></h2><div class="ugrid">${pend.map(cartao).join('')}</div>` : ''}
+    <h2 class="sec">Utilizadores <span class="muted small">${ativos.length} · ${ativos.filter(p => p.papel === 'pediatra').length} pediatria · ${ativos.filter(p => p.papel === 'mgf').length} MGF · ${ativos.filter(p => p.is_admin).length} admin</span></h2>
+    <div class="ugrid">${ativos.map(cartao).join('')}</div>`;
   const upd = async (id, obj) => { const { error } = await sb.from('perfis').update(obj).eq('id', id); if (error) toast(erroMsg(error), true); else { toast('Atualizado.'); route(); } };
   $$('[data-aprovar]', a).forEach(b => b.onclick = () => upd(b.dataset.aprovar, { aprovado: true, ativo: true }));
   $$('[data-ativo]', a).forEach(b => b.onclick = () => upd(b.dataset.ativo, { ativo: b.dataset.v === 'true' }));

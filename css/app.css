@@ -209,3 +209,39 @@ html, body { overflow-x: clip; }
 .badge.atraso { background: var(--urg); color: #fff; }
 .case.atrasado { box-shadow: 0 0 0 2px var(--urg) inset; }
 .termos { max-height: 50vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 9px; padding: 12px; font-size: .9rem; }
+
+/* administração: separadores em cartões */
+.admtabs { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.admtabs a { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); text-decoration: none; box-shadow: var(--shadow); min-width: 0; }
+.admtabs a .ic { flex: none; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--surface-2); color: var(--muted); }
+.admtabs a b { display: block; font-size: .95rem; line-height: 1.25; }
+.admtabs a small { display: block; color: var(--muted); font-size: .76rem; line-height: 1.3; }
+.admtabs a.active { border-color: var(--brand); background: var(--brand-soft); }
+.admtabs a.active .ic { background: var(--brand); color: #fff; }
+.admtabs a.alerta small { color: var(--urg); font-weight: 600; }
+@media (max-width: 560px) { .admtabs { grid-template-columns: 1fr 1fr; gap: 8px; } .admtabs a { padding: 10px; gap: 8px; } .admtabs a .ic { width: 32px; height: 32px; } }
+h2.sec { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0 10px; }
+/* utilizadores em cartões */
+.ugrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 20px; }
+@media (max-width: 560px) { .ugrid { grid-template-columns: minmax(0, 1fr); } }
+.ucard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; min-width: 0; }
+.ucard.pendente { border-color: var(--warn, #c98a00); border-width: 2px; }
+.ucard.inativo { opacity: .6; }
+.ucard header { display: flex; gap: 10px; align-items: flex-start; }
+.ucard .who2 { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ucard .who2 b, .ucard .who2 span { overflow-wrap: anywhere; }
+.ucard .badges { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.badge.admin { background: var(--brand); color: #fff; }
+.avatar { flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: .9rem; color: #fff; background: var(--brand); }
+.avatar.mgf { background: #6d5bd0; }
+.ucard .meta2 { color: var(--muted); margin: 8px 0 10px; }
+.ucard .ctrls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.ucard .ctrls select { width: auto; flex: 0 0 auto; }
+.ucard .actions { margin-top: 10px; }
+.switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; font-size: .9rem; cursor: pointer; margin: 0; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch span { width: 40px; height: 24px; border-radius: 99px; background: var(--line); position: relative; transition: background .15s; flex: none; }
+.switch span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+.switch input:checked + span { background: var(--brand); }
+.switch input:checked + span::after { transform: translateX(16px); }
+.switch.dis { opacity: .55; cursor: default; }
