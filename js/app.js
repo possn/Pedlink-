@@ -249,7 +249,9 @@ function ligarDitado(root) {
 
 // Reprocessa imagens num canvas: remove EXIF/GPS/metadados e reduz tamanho
 async function anonimizarImagem(file) {
-  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch { throw new Error('Formato de imagem não suportado neste dispositivo. Tire a fotografia em JPG ou faça captura de ecrã.'); }
   const max = 2000;
   const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas');
@@ -467,7 +469,7 @@ function shell() {
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
         <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 20</div></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 21</div></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
@@ -655,7 +657,7 @@ async function vistaFormCaso(v, id) {
       ${campoTexto('pergunta', 'Pergunta concreta ao pediatra', '(o que precisa de saber?)', 3, true, 2000)}
       <div id="avisos"></div>
       ${!id ? `<div class="field"><label for="c_img">Imagens <span class="hint">(opcional: fotografias de lesões, ECG, relatórios — JPG/PNG; os metadados são removidos)</span></label>
-        <input id="c_img" type="file" accept="image/jpeg,image/png" multiple>
+        <input id="c_img" type="file" accept="image/*" multiple>
         <div class="muted small">Garanta que nenhuma imagem mostra o rosto, nome, etiqueta ou número do doente.</div></div>` : ''}
       <label class="check"><input type="checkbox" id="c_conf" required> Confirmo que este caso não contém dados que permitam identificar o doente.</label>
       <div class="actions" style="margin-top:16px"><button class="btn" id="gravar">${id ? 'Guardar alterações' : 'Submeter caso'}</button>
@@ -714,7 +716,8 @@ async function vistaFormCaso(v, id) {
 }
 
 async function carregarAnexo(casoId, file) {
-  if (!/^image\/(jpeg|png)$/.test(file.type)) throw new Error('Apenas imagens JPG ou PNG.');
+  if (!/^image\//.test(file.type) && !/\.(hei[cf]|jpe?g|png|webp)$/i.test(file.name)) throw new Error('Apenas imagens (fotografias).');
+  if (file.size > 25 * 1024 * 1024) throw new Error('Imagem demasiado grande (máx. 25 MB).');
   const blob = await anonimizarImagem(file);
   const path = `${casoId}/${crypto.randomUUID()}.jpg`;
   const { error } = await sb.storage.from('anexos').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
@@ -779,7 +782,7 @@ async function vistaCaso(v, id) {
         </section>
         ${(anx?.length || ped || meu) ? `<section class="card"><h2>Imagens</h2>
           ${anx?.length ? `<div class="gallery">${anx.map(a => `<a href="${esc(urls[a.path] || '#')}" target="_blank" rel="noopener"><img src="${esc(urls[a.path] || '')}" alt="Imagem do caso" loading="lazy"></a>`).join('')}</div>` : '<p class="muted">Sem imagens.</p>'}
-          ${c.estado !== 'fechado' ? `<div class="field" style="margin-top:12px"><label for="addImg">Adicionar imagem <span class="hint">(metadados removidos automaticamente)</span></label><input type="file" id="addImg" accept="image/jpeg,image/png" multiple></div>` : ''}
+          ${c.estado !== 'fechado' ? `<div class="field" style="margin-top:12px"><label for="addImg">Adicionar imagem <span class="hint">(metadados removidos automaticamente)</span></label><input type="file" id="addImg" accept="image/*" multiple></div>` : ''}
         </section>` : ''}
         <section class="card"><h2>Conversa</h2>
           <div class="thread">${(coms || []).map(m => `
@@ -829,6 +832,7 @@ async function vistaCaso(v, id) {
   ligarDitado(v);
   $('#apagar')?.addEventListener('click', async () => {
     if (!confirm('Apagar definitivamente este caso?')) return;
+    if (anx?.length) await sb.storage.from('anexos').remove(anx.map(a => a.path));
     const { error } = await sb.from('casos').delete().eq('id', id);
     if (error) return toast(erroMsg(error), true);
     toast('Caso apagado.'); location.hash = '#/casos';
@@ -1318,8 +1322,7 @@ async function ativarPush() {
   let sub = await reg.pushManager.getSubscription();
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlParaBytes(cfg.valor) });
   const j = sub.toJSON();
-  await sb.from('push_subscricoes').delete().eq('endpoint', j.endpoint);
-  const { error } = await sb.from('push_subscricoes').insert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, dispositivo: (IOS ? 'iPhone/iPad' : navigator.platform || 'browser').slice(0, 60) });
+  const { error } = await sb.rpc('registar_push', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_dispositivo: (IOS ? 'iPhone/iPad' : navigator.platform || 'browser').slice(0, 60) });
   if (error) throw error;
 }
 async function desativarPush() {

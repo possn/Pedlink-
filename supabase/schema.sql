@@ -1,7 +1,9 @@
 -- =====================================================================
 -- PedLink — esquema completo da base de dados (Supabase / Postgres 15+)
--- Colar no SQL Editor de um projeto novo e executar uma vez.
--- Idempotente na medida do possível; seguro para voltar a correr.
+-- Só para criar um projeto NOVO. Depois de executar este ficheiro, aplicar TODAS as
+-- migrações de supabase/migrations/ por ordem (a GitHub Action "migracoes" fá-lo
+-- automaticamente). Não voltar a correr num projeto em produção: as migrações
+-- substituem várias funções definidas aqui.
 -- =====================================================================
 
 create extension if not exists pgcrypto;
@@ -119,6 +121,7 @@ language plpgsql security definer set search_path = '' as $$
 declare
   v_papel text := coalesce(new.raw_user_meta_data->>'papel', 'mgf');
   v_unid  uuid;
+  v_nome  text := coalesce(nullif(trim(new.raw_user_meta_data->>'nome'),''), split_part(new.email,'@',1));
 begin
   if v_papel not in ('mgf','pediatra') then v_papel := 'mgf'; end if;
   begin
@@ -126,21 +129,15 @@ begin
   exception when others then v_unid := null;
   end;
   insert into public.perfis (id, nome, email, papel, aprovado, unidade_id, servico)
-  values (
-    new.id,
-    coalesce(nullif(trim(new.raw_user_meta_data->>'nome'),''), split_part(new.email,'@',1)),
-    new.email,
-    v_papel,
-    v_papel = 'mgf',            -- MGF com email institucional entra logo; pediatras precisam de aprovação
-    v_unid,
-    nullif(trim(new.raw_user_meta_data->>'servico'),'')
-  ) on conflict (id) do nothing;
+  values (new.id, v_nome, new.email, v_papel, false, v_unid,
+          nullif(trim(new.raw_user_meta_data->>'servico'),''))
+  on conflict (id) do nothing;
 
-  if v_papel = 'pediatra' then
-    insert into public.notificacoes (user_id, texto, link)
-    select p.id, 'Novo pedido de acesso de pediatra: ' || coalesce(new.raw_user_meta_data->>'nome', new.email), '#/admin'
-    from public.perfis p where p.is_admin and p.ativo;
-  end if;
+  insert into public.notificacoes (user_id, texto, link)
+  select p.id,
+         'Novo pedido de acesso (' || case when v_papel = 'pediatra' then 'Pediatria' else 'MGF' end || '): ' || v_nome,
+         '#/admin/utilizadores'
+  from public.perfis p where p.is_admin and p.ativo and p.aprovado;
   return new;
 end $$;
 

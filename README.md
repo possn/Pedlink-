@@ -19,24 +19,25 @@ Estados do caso: Novo → Em análise → Discussão com subespecialidade → Re
 ## Proteção de dados
 - Sem nome, nº de utente, NIF, nº de processo, data de nascimento completa, morada ou contactos: só idade e sexo.
 - A base de dados **rejeita** texto com números de 9 dígitos (utente SNS/NIF/telefone), números ≥ 8 dígitos, nº de CC, emails e "nº utente/processo: …". A app avisa ainda sobre datas completas, moradas e possíveis nomes.
-- Imagens (JPG/PNG) são redesenhadas num canvas antes do envio: EXIF/GPS e outros metadados são removidos; nome do ficheiro é aleatório.
+- Imagens (qualquer fotografia, incluindo HEIC do iPhone) são redesenhadas num canvas antes do envio: EXIF/GPS e outros metadados são removidos; nome do ficheiro é aleatório.
 - Buckets de Storage privados; acesso por URLs assinadas de curta duração.
 - Registo só com email `@…min-saude.pt` (exceções geridas pelo admin).
 - O service worker não guarda dados clínicos em cache.
 
 ## Instalação
 1. Criar projeto Supabase (região *Central EU – Frankfurt*).
-2. SQL Editor → colar e executar [`supabase/schema.sql`](supabase/schema.sql).
+2. SQL Editor → executar [`supabase/schema.sql`](supabase/schema.sql) e [`supabase/02-permissoes.sql`](supabase/02-permissoes.sql); depois aplicar **todas** as migrações de `supabase/migrations/` por ordem (a GitHub Action *migracoes* fá-lo com o segredo `SUPABASE_DB_URL`). Nunca voltar a correr `schema.sql` num projeto em produção.
 3. Authentication → URL Configuration: **Site URL** = `https://possn.github.io/Pedlink-/` e adicionar o mesmo em *Redirect URLs*.
 4. Preencher `js/config.js` com o *Project URL* e a *publishable/anon key* (nunca a service_role).
 5. Registar-se na app e, no SQL Editor, tornar-se admin:
    ```sql
    update public.perfis set papel='pediatra', is_admin=true, aprovado=true where email='o.seu.email@...';
    ```
-6. Em Administração → ACES e unidades, substituir as unidades de exemplo pelas reais.
+6. As unidades da ULS Amadora/Sintra são carregadas pela migração `20261126_01`; ajustar em Administração → ACES e unidades.
+7. Notificações push: definir o segredo `SUPABASE_ACCESS_TOKEN` no GitHub; a Action *funcoes* publica a Edge Function `push` e gera as chaves VAPID.
 
 ### Email
 O SMTP incluído no Supabase envia poucos emails por hora (só para testes). Para produção, configurar SMTP próprio em Authentication → Emails → SMTP Settings (ex.: conta institucional ou Resend/Brevo).
 
 ## Migração futura para outra conta
-Criar o novo projeto, correr `schema.sql`, exportar/importar os dados (`pg_dump --data-only` das tabelas `public.*` e os ficheiros dos buckets) e trocar `js/config.js`. O repositório pode ser transferido em GitHub → Settings → Transfer.
+Criar o novo projeto, correr `schema.sql` + migrações, exportar/importar os dados (`pg_dump --data-only` das tabelas `public.*` e os ficheiros dos buckets) e trocar `js/config.js`. O repositório pode ser transferido em GitHub → Settings → Transfer.
