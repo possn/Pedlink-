@@ -1,0 +1,32 @@
+name: Diagnóstico das notificações
+
+# Verifica a função "push" e as últimas chamadas da base de dados (só contagens e códigos, sem dados pessoais).
+on: workflow_dispatch
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    env:
+      DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - name: Verificar
+        run: |
+          set -uo pipefail
+          DB_URL=$(printf '%s' "$DB_URL" | tr -d '[:space:]' | tr -d '[]')
+          DB_URL=$(DB_URL="$DB_URL" python3 -c '
+          import os, urllib.parse as u
+          url = os.environ["DB_URL"]
+          esq, sep, resto = url.partition("://")
+          cred, _, host = resto.rpartition("@")
+          user, _, pw = cred.partition(":")
+          pw = u.quote(u.unquote(pw), safe="")
+          print(f"{esq}{sep}{user}:{pw}@{host}")')
+          echo "::add-mask::$DB_URL"
+          SEG=$(psql "$DB_URL" -tAc "select valor from private.config where chave = 'push_segredo'"); echo "::add-mask::$SEG"
+          F=https://zkbnhyzxuymcowfepsdz.supabase.co/functions/v1/push
+          echo "sem segredo (esperado 403):"; curl -s -o /dev/null -w "%{http_code}\n" -X POST "$F"
+          echo "com segredo e id inexistente (esperado 404 = função e acesso à BD ok):"; curl -s -w " %{http_code}\n" -X POST "$F" -H "x-pedlink-segredo: $SEG" -H 'Content-Type: application/json' -d '{"id":"00000000-0000-0000-0000-000000000000"}'
+          psql "$DB_URL" -c "select count(*) as subscricoes from public.push_subscricoes"
+          psql "$DB_URL" -c "select (valor is not null) as vapid_publica from public.config_publica where chave='vapid_public'"
+          psql "$DB_URL" -c "select status_code, left(coalesce(content,error_msg,''),80) as resposta, count(*) from net._http_response where created > now() - interval '1 day' group by 1,2 order by 3 desc" || true
+          psql "$DB_URL" -c "select jobname, schedule, active from cron.job" || true
