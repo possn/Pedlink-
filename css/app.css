@@ -252,3 +252,7 @@ h2.sec { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 
 .card.codigo.destaque { border: 2px solid var(--brand); background: var(--brand-soft); }
 .codline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: -4px 0 14px; }
 .instr h2 { margin-top: 18px; } .instr h2:first-child { margin-top: 0; }
+
+/* avaliação da resposta */
+.card.aval:not(.feita) { border: 2px solid var(--brand); }
+.seg.nota label { flex: 1 1 0; min-width: 0; justify-content: center; padding: 9px 4px; }

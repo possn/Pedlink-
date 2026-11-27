@@ -442,12 +442,12 @@ function ecraPendente() {
 // ---------------------------------------------------------------------------
 // Estrutura principal (menu lateral)
 // ---------------------------------------------------------------------------
-async function sair() {
+async function sair(msg) {
   try { await desativarPush(); } catch { /* ignore */ }
   try { await sb.auth.signOut({ scope: 'local' }); } catch { /* ignore */ }
   st.session = null; st.perfil = null;
   history.replaceState(null, '', location.pathname);
-  ecraAuth('entrar', 'Sessão terminada. Outra pessoa pode agora entrar ou criar conta.');
+  ecraAuth('entrar', msg || 'Sessão terminada. Outra pessoa pode agora entrar ou criar conta.');
 }
 
 function shell() {
@@ -469,7 +469,7 @@ function shell() {
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
         <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 21</div></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 22</div></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
@@ -730,11 +730,12 @@ async function carregarAnexo(casoId, file) {
 // Detalhe do caso
 // ---------------------------------------------------------------------------
 async function vistaCaso(v, id) {
-  const [{ data: c, error }, { data: coms }, { data: anx }, { data: pediatras }] = await Promise.all([
+  const [{ data: c, error }, { data: coms }, { data: anx }, { data: pediatras }, { data: aval }] = await Promise.all([
     sb.from('casos').select('*, unidades(nome, tipo, centro_saude, aces(nome, uls)), criador:perfis!casos_criado_por_fkey(nome), pediatra:perfis!casos_pediatra_id_fkey(nome, servico)').eq('id', id).maybeSingle(),
     sb.from('comentarios').select('*, autor:perfis(nome, papel)').eq('caso_id', id).order('created_at'),
     sb.from('anexos').select('*').eq('caso_id', id).order('created_at'),
     isPed() ? sb.from('perfis').select('id, nome').in('papel', ['pediatra']).eq('aprovado', true).eq('ativo', true).order('nome') : Promise.resolve({ data: [] }),
+    sb.from('avaliacoes').select('*').eq('caso_id', id).maybeSingle(),
   ]);
   if (error) throw error;
   if (!c) { v.innerHTML = '<div class="alert err">Caso não encontrado ou sem permissão.</div>'; return; }
@@ -764,6 +765,7 @@ async function vistaCaso(v, id) {
         ${(meu && c.estado === 'novo') || isAdmin() ? '<button class="btn secondary small" id="apagar">Apagar</button>' : ''}</div>` : ''}
     </div>
     ${cartaoCodigo(c, meu, ped)}
+    ${cartaoAvaliacao(c, meu, aval)}
     <div class="cols">
       <div>
         <section class="card"><h2>Caso clínico</h2>
@@ -830,6 +832,7 @@ async function vistaCaso(v, id) {
     </div>`;
 
   ligarDitado(v);
+  ligarAvaliacao(v, c, aval);
   $('#apagar')?.addEventListener('click', async () => {
     if (!confirm('Apagar definitivamente este caso?')) return;
     if (anx?.length) await sb.storage.from('anexos').remove(anx.map(a => a.path));
@@ -1177,8 +1180,15 @@ async function adminEmails(a) {
 }
 
 async function adminEstatisticas(a) {
-  const { data, error } = await sb.from('casos').select('codigo, idade_valor, idade_unidade, sexo, estado, prioridade, desfecho, subespecialidade, created_at, primeira_resposta_em, fechado_em, unidades(nome, tipo, aces(nome))').order('created_at');
+  const [{ data, error }, { data: avs }] = await Promise.all([
+    sb.from('casos').select('id, codigo, idade_valor, idade_unidade, sexo, estado, prioridade, desfecho, subespecialidade, created_at, primeira_resposta_em, fechado_em, unidades(nome, tipo, aces(nome))').order('created_at'),
+    sb.from('avaliacoes').select('caso_id, utilidade, mudou_conduta, evitou_ref'),
+  ]);
   if (error) throw error;
+  const avMap = Object.fromEntries((avs || []).map(x => [x.caso_id, x]));
+  const avaliados = data.filter(c => avMap[c.id]).map(c => avMap[c.id]);
+  const pct = (n, d) => d ? Math.round(100 * n / d) + '%' : '—';
+  const refDecid = avaliados.filter(x => x.evitou_ref !== 'na');
   const H = (x, y) => (new Date(y) - new Date(x)) / 3600000;
   const conta = (arr, f) => arr.reduce((m, x) => { const k = f(x) || '—'; m[k] = (m[k] || 0) + 1; return m; }, {});
   const tabela = (titulo, obj, map = {}, ordenar = true) => `<section class="card"><h2>${titulo}</h2><table class="table"><tbody>${(ordenar ? Object.entries(obj).sort((x, y) => y[1] - x[1]) : Object.entries(obj)).map(([k, n]) => `<tr><td>${esc(map[k] || k)}</td><td style="text-align:right"><b>${n}</b></td></tr>`).join('') || '<tr><td class="muted">Sem dados.</td></tr>'}</tbody></table></section>`;
@@ -1197,8 +1207,15 @@ async function adminEstatisticas(a) {
       <div class="stat"><b style="color:${atrasados ? 'var(--urg)' : 'inherit'}">${atrasados}</b><span>Fora do prazo agora</span></div>
       <div class="stat"><b>${comDesf.length ? Math.round(100 * evitadas / comDesf.length) + '%' : '—'}</b><span>Resolvidos sem referenciação</span></div>
       <div class="stat"><b>${fmtHoras(mediana(fechados.filter(c => c.fechado_em).map(c => H(c.created_at, c.fechado_em))))}</b><span>Mediana até fecho</span></div></div>
+    <section class="card"><h2>Avaliação pelos MGF</h2>
+      <div class="stats" style="margin:0">
+        <div class="stat"><b>${pct(avaliados.length, respondidos.length)}</b><span>Respostas avaliadas (${avaliados.length}/${respondidos.length})</span></div>
+        <div class="stat"><b>${avaliados.length ? (avaliados.reduce((t, x) => t + x.utilidade, 0) / avaliados.length).toFixed(1).replace('.', ',') : '—'}</b><span>Utilidade média (1 a 5)</span></div>
+        <div class="stat"><b>${pct(avaliados.filter(x => x.mudou_conduta).length, avaliados.length)}</b><span>Mudou a conduta do MGF</span></div>
+        <div class="stat"><b>${pct(refDecid.filter(x => x.evitou_ref === 'sim').length, refDecid.length)}</b><span>Referenciação/urgência evitada*</span></div></div>
+      <p class="small muted" style="margin:10px 0 0">* Entre os casos em que o MGF tencionava referenciar (exclui "não tencionava referenciar").</p></section>
     <section class="card"><h2>Exportar para Excel</h2>
-      <p class="small muted">Ficheiro CSV <b>anónimo</b>, sem texto livre: código, datas, unidade, prioridade, idade, sexo, estado, subespecialidade, desfecho e tempos de resposta. Abre diretamente no Excel.</p>
+      <p class="small muted">Ficheiro CSV <b>anónimo</b>, sem texto livre: código, datas, unidade, prioridade, idade, sexo, estado, subespecialidade, desfecho e tempos de resposta e avaliação do MGF. Abre diretamente no Excel.</p>
       <button class="btn" id="expCsv">Exportar ${data.length} caso(s)</button></section>
     <section class="card"><h2>Tempo até 1.ª resposta por prioridade</h2><table class="table"><thead><tr><th></th><th style="text-align:right">Mediana</th><th style="text-align:right">No prazo</th></tr></thead><tbody>${porPrio}</tbody></table></section>
     <div class="grid2">
@@ -1222,6 +1239,8 @@ async function adminEstatisticas(a) {
       data_1a_resposta: dataPT(c.primeira_resposta_em), horas_ate_1a_resposta: num(h1),
       prazo_horas: PRAZO_H[c.prioridade], dentro_do_prazo: h1 == null ? (prazoCaso(c).atrasado ? 'não (pendente)' : 'pendente') : h1 <= PRAZO_H[c.prioridade] ? 'sim' : 'não',
       data_fecho: dataPT(c.fechado_em), dias_ate_fecho: c.fechado_em ? num(H(c.created_at, c.fechado_em) / 24) : '',
+      mgf_utilidade: avMap[c.id]?.utilidade ?? '', mgf_mudou_conduta: avMap[c.id] ? (avMap[c.id].mudou_conduta ? 'sim' : 'não') : '',
+      mgf_evitou_referenciacao: avMap[c.id] ? { sim: 'sim', nao: 'não', na: 'não tencionava' }[avMap[c.id].evitou_ref] : '',
     };
   }), `PedLink-casos-${new Date().toISOString().slice(0, 10)}.csv`);
 }
@@ -1459,6 +1478,68 @@ async function vistaInstrucoes(v) {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// Avaliação da resposta pelo MGF (indicador principal de qualidade)
+// ---------------------------------------------------------------------------
+const AV_REF = { sim: 'Sim, evitou referenciação/urgência', nao: 'Não, foi ou será referenciado', na: 'Não tencionava referenciar' };
+function resumoAvaliacao(a) {
+  return `<b>Utilidade ${a.utilidade}/5</b> · ${a.mudou_conduta ? 'mudou a conduta' : 'não mudou a conduta'} · ${esc(AV_REF[a.evitou_ref])}`;
+}
+function cartaoAvaliacao(c, meu, a) {
+  if (!c.primeira_resposta_em) return '';
+  if (!meu) return a ? `<div class="alert info small">${icon('info')} Avaliação do MGF: ${resumoAvaliacao(a)}</div>` : '';
+  if (a) return `<section class="card aval feita" id="avCard"><div class="cod-top"><div><span class="muted small">A sua avaliação da resposta</span><div>${resumoAvaliacao(a)}</div></div>
+    <button class="btn secondary small" id="avEditar">Alterar</button></div></section>`;
+  return formAvaliacao(a);
+}
+function formAvaliacao(a) {
+  const r = (nome, val, txt, chk) => `<label><input type="radio" name="${nome}" value="${val}" ${chk ? 'checked' : ''} required> ${txt}</label>`;
+  return `<form class="card aval" id="avCard">
+    <h2 style="margin-bottom:4px">Avalie a resposta da Pediatria</h2>
+    <p class="small muted" style="margin-top:0">3 perguntas, 30 segundos. Serve para os indicadores de qualidade do projeto (agregados).</p>
+    <div class="field"><label>1. Qual a utilidade da resposta?</label><div class="seg nota">${[1, 2, 3, 4, 5].map(n => r('avU', n, n, a?.utilidade === n)).join('')}</div>
+      <div class="small muted" style="display:flex;justify-content:space-between"><span>1 = nada útil</span><span>5 = muito útil</span></div></div>
+    <div class="field"><label>2. A resposta mudou a sua conduta?</label><div class="seg">${r('avC', 'true', 'Sim', a?.mudou_conduta === true)}${r('avC', 'false', 'Não', a?.mudou_conduta === false)}</div></div>
+    <div class="field"><label>3. Evitou uma referenciação à consulta hospitalar ou ida à urgência?</label><div class="seg">${Object.entries(AV_REF).map(([k, t]) => r('avR', k, t, a?.evitou_ref === k)).join('')}</div></div>
+    <button class="btn">Guardar avaliação</button></form>`;
+}
+function ligarAvaliacao(v, c, a) {
+  const ligarForm = () => {
+    const f = $('#avCard', v);
+    if (!f || f.tagName !== 'FORM') return;
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const val = (n) => f.querySelector(`input[name="${n}"]:checked`)?.value;
+      const row = { caso_id: c.id, utilidade: Number(val('avU')), mudou_conduta: val('avC') === 'true', evitou_ref: val('avR') };
+      const { error } = a ? await sb.from('avaliacoes').update(row).eq('caso_id', c.id) : await sb.from('avaliacoes').insert(row);
+      if (error) return toast(erroMsg(error), true);
+      toast('Obrigado! Avaliação registada.'); route();
+    };
+  };
+  $('#avEditar', v)?.addEventListener('click', () => { $('#avCard', v).outerHTML = formAvaliacao(a); ligarForm(); });
+  ligarForm();
+}
+
+// ---------------------------------------------------------------------------
+// Fim de sessão por inatividade (só no navegador; a app instalada é pessoal)
+// ---------------------------------------------------------------------------
+const INATIVO_MIN = 30;
+function vigiarInatividade() {
+  if (EM_APP) return;
+  let ultimo = Date.now();
+  const marca = () => { ultimo = Date.now(); };
+  ['pointerdown', 'keydown', 'touchstart', 'scroll', 'input'].forEach(ev => addEventListener(ev, marca, { passive: true, capture: true }));
+  const verifica = () => {
+    if (st.perfil && Date.now() - ultimo > INATIVO_MIN * 60000) {
+      ultimo = Date.now();
+      sair(`Sessão terminada após ${INATIVO_MIN} minutos sem atividade, para proteger os casos em computadores partilhados.`);
+    }
+  };
+  setInterval(verifica, 30000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') verifica(); });
+}
+
 // ---------------------------------------------------------------------------
 // Arranque
 // ---------------------------------------------------------------------------
@@ -1494,5 +1575,6 @@ sb.auth.onAuthStateChange((evt, session) => {
 });
 window.addEventListener('hashchange', () => { if (st.perfil && !location.hash.startsWith('#/nova-password')) route(); });
 setInterval(() => { if (document.visibilityState === 'visible') atualizarContador(); }, 60000);
+vigiarInatividade();
 
 arrancar();

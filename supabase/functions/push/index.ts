@@ -18,7 +18,9 @@ Deno.serve(async (req) => {
   if (error || !n) return new Response('notificação não encontrada', { status: 404 });
   const { data: subs } = await sb.from('push_subscricoes').select('id, endpoint, p256dh, auth').eq('user_id', n.user_id);
 
-  const payload = JSON.stringify({ title: 'PedLink', body: String(n.texto).slice(0, 180), url: n.link || '#/notificacoes', tag: n.link || undefined });
+  // No ecrã bloqueado não mostrar texto clínico: "Novo caso PL-… (prioridade): motivo" -> só código e prioridade.
+  const corpo = String(n.texto).replace(/^(Novo caso [^:]+):[\s\S]*$/, '$1').slice(0, 180);
+  const payload = JSON.stringify({ title: 'PedLink', body: corpo, url: n.link || '#/notificacoes', tag: n.link || undefined });
   let enviados = 0;
   await Promise.all((subs ?? []).map(async (s) => {
     try {
