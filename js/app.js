@@ -32,6 +32,7 @@ const DESFECHOS = {
 const AREAS = ['Geral', 'Alergologia', 'Cardiologia', 'Cirurgia pediátrica', 'Desenvolvimento', 'Endocrinologia',
   'Gastroenterologia', 'Hematologia', 'Infecciologia', 'Nefrologia', 'Neonatologia', 'Neurologia', 'Nutrição',
   'Oncologia', 'Ortopedia', 'Pneumologia', 'Reumatologia', 'Saúde mental / Pedopsiquiatria', 'Adolescência', 'Outra'];
+const SUBESP = AREAS.filter(a => !['Geral', 'Outra'].includes(a));
 const TIPOS_UNIDADE = ['USF', 'UCSP', 'UCC', 'USP', 'URAP', 'Hospital', 'Outra'];
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,7 @@ function icon(name) {
     lixo: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
     copiar: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+    enviar: '<path d="M5 12h13M13 6l6 6-6 6"/>',
     cadeado: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   }[name] || '';
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
@@ -268,6 +270,8 @@ const app = $('#app');
 const st = { session: null, perfil: null, unidades: [], aces: [], naoLidas: 0 };
 const isPed = () => st.perfil && (st.perfil.papel === 'pediatra' || st.perfil.is_admin);
 const isAdmin = () => !!st.perfil?.is_admin;
+const isPedGeral = () => !!st.perfil && (st.perfil.is_admin || (st.perfil.papel === 'pediatra' && st.perfil.pediatria_geral !== false));
+const subespTxt = (p) => p?.papel === 'pediatra' && p.subespecialidades?.length ? p.subespecialidades.join(', ') : '';
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   app.innerHTML = `<div class="auth"><div class="card"><div class="logo"><img src="icons/logo.svg" alt=""><b>PedLink</b></div>
@@ -469,7 +473,7 @@ function shell() {
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
         <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 22</div></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 23</div></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
@@ -730,16 +734,17 @@ async function carregarAnexo(casoId, file) {
 // Detalhe do caso
 // ---------------------------------------------------------------------------
 async function vistaCaso(v, id) {
-  const [{ data: c, error }, { data: coms }, { data: anx }, { data: pediatras }, { data: aval }] = await Promise.all([
+  const [{ data: c, error }, { data: coms }, { data: anx }, { data: pediatras }, { data: aval }, { data: encs }] = await Promise.all([
     sb.from('casos').select('*, unidades(nome, tipo, centro_saude, aces(nome, uls)), criador:perfis!casos_criado_por_fkey(nome), pediatra:perfis!casos_pediatra_id_fkey(nome, servico)').eq('id', id).maybeSingle(),
-    sb.from('comentarios').select('*, autor:perfis(nome, papel)').eq('caso_id', id).order('created_at'),
+    sb.from('comentarios').select('*, autor:perfis(nome, papel, pediatria_geral, subespecialidades)').eq('caso_id', id).order('created_at'),
     sb.from('anexos').select('*').eq('caso_id', id).order('created_at'),
-    isPed() ? sb.from('perfis').select('id, nome').in('papel', ['pediatra']).eq('aprovado', true).eq('ativo', true).order('nome') : Promise.resolve({ data: [] }),
+    isPed() ? sb.from('perfis').select('id, nome, pediatria_geral, subespecialidades').in('papel', ['pediatra']).eq('aprovado', true).eq('ativo', true).order('nome') : Promise.resolve({ data: [] }),
     sb.from('avaliacoes').select('*').eq('caso_id', id).maybeSingle(),
+    isPed() ? sb.from('encaminhamentos').select('*, para:perfis!encaminhamentos_para_id_fkey(nome), autor:perfis!encaminhamentos_criado_por_fkey(nome), resp:perfis!encaminhamentos_respondido_por_fkey(nome)').eq('caso_id', id).order('created_at') : Promise.resolve({ data: [] }),
   ]);
   if (error) throw error;
   if (!c) { v.innerHTML = '<div class="alert err">Caso não encontrado ou sem permissão.</div>'; return; }
-  const ped = isPed();
+  const ped = isPed(), pedAny = ped;
   const meu = c.criado_por === st.perfil.id;
 
   // marcar notificações deste caso como lidas
@@ -789,12 +794,12 @@ async function vistaCaso(v, id) {
         <section class="card"><h2>Conversa</h2>
           <div class="thread">${(coms || []).map(m => `
             <div class="msg ${m.interno ? 'interno' : ''} ${m.autor_id === st.perfil.id ? 'mine' : ''}">
-              <div class="h"><b>${esc(m.autor?.nome || 'Colega')}</b><span>${m.autor?.papel === 'pediatra' ? 'Pediatria' : 'MGF'}</span><span>${fmtDataHora(m.created_at)}</span>${m.interno ? '<span class="badge e-subespecialidade">Nota interna da pediatria</span>' : ''}</div>
+              <div class="h"><b>${esc(m.autor?.nome || 'Colega')}</b><span>${m.autor?.papel === 'pediatra' ? (m.autor.pediatria_geral === false && subespTxt(m.autor) ? esc(subespTxt(m.autor)) : 'Pediatria') : 'MGF'}</span><span>${fmtDataHora(m.created_at)}</span>${m.interno ? '<span class="badge e-subespecialidade">Nota interna da pediatria</span>' : ''}</div>
               <div class="t">${esc(m.texto)}</div></div>`).join('') || '<p class="muted">Ainda sem mensagens.</p>'}</div>
           <form id="fm">
-            <div class="field"><div class="labelrow"><span></span>${botaoDitar('mTxt')}</div><textarea id="mTxt" rows="3" maxlength="4000" required placeholder="${ped ? 'Mensagem para o médico de família, ou nota interna' : 'Escreva uma mensagem ou acrescente informação'}"></textarea><div class="fielderr" id="mErr"></div></div>
+            <div class="field"><div class="labelrow"><span></span>${botaoDitar('mTxt')}</div><textarea id="mTxt" rows="3" maxlength="4000" required placeholder="${pedAny ? 'Mensagem para o médico de família, ou nota interna' : 'Escreva uma mensagem ou acrescente informação'}"></textarea><div class="fielderr" id="mErr"></div></div>
             <div class="row" style="align-items:center">
-              ${ped ? '<label class="check" style="flex:1 1 auto"><input type="checkbox" id="mInt"> Nota interna (só pediatras, ex.: discussão com subespecialidade)</label>' : '<span></span>'}
+              ${pedAny ? '<label class="check" style="flex:1 1 auto"><input type="checkbox" id="mInt"> Nota interna (só pediatras)</label>' : '<span></span>'}
               <div style="flex:0 0 auto"><button class="btn">Enviar</button></div></div>
           </form>
         </section>
@@ -812,6 +817,7 @@ async function vistaCaso(v, id) {
           ${c.resposta ? `<div class="answer">${esc(c.resposta)}</div>` : '<p class="muted">Ainda sem resposta.</p>'}
           ${c.desfecho ? `<p style="margin-top:12px"><b>Desfecho:</b> ${esc(DESFECHOS[c.desfecho])}${c.desfecho_nota ? '<br>' + esc(c.desfecho_nota) : ''}</p>` : ''}
         </section>
+        ${pedAny ? cartaoEncaminhamentos(c, encs || [], pediatras || [], ped) : ''}
         ${ped ? `<section class="card"><h2>Gestão do caso</h2>
           <form id="fg">
             <div class="field"><label for="gEst">Estado</label><select id="gEst">${Object.entries(ESTADOS).map(([k, t]) => `<option value="${k}" ${c.estado === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
@@ -833,6 +839,7 @@ async function vistaCaso(v, id) {
 
   ligarDitado(v);
   ligarAvaliacao(v, c, aval);
+  if (pedAny) ligarEncaminhamentos(v, c, pediatras || []);
   $('#apagar')?.addEventListener('click', async () => {
     if (!confirm('Apagar definitivamente este caso?')) return;
     if (anx?.length) await sb.storage.from('anexos').remove(anx.map(a => a.path));
@@ -990,7 +997,8 @@ async function vistaPerfil(v) {
       <div class="field"><label for="pfN">Nome profissional</label><input id="pfN" value="${esc(p.nome)}" required maxlength="120"></div>
       ${p.papel === 'mgf' ? `<div class="field"><label for="pfU">Unidade de saúde</label><select id="pfU" required>${opcoesUnidades(p.unidade_id)}</select></div>`
       : `<div class="field"><label for="pfH">Hospital</label><select id="pfH"><option value="">—</option>${opcoesHospitais(p.unidade_id).replace(/<option value="outro"[^>]*>[^<]*<\/option>/, '')}</select></div>
-         <div class="field"><label for="pfS">Hospital / serviço <span class="hint">(texto mostrado aos colegas)</span></label><input id="pfS" value="${esc(p.servico)}" maxlength="120"></div>`}
+         <div class="field"><label for="pfS">Hospital / serviço <span class="hint">(texto mostrado aos colegas)</span></label><input id="pfS" value="${esc(p.servico)}" maxlength="120"></div>
+         <p class="small muted">${p.pediatria_geral === false ? 'Subespecialista' : 'Pediatria geral (recebe casos novos)'}${subespTxt(p) ? ' · Subespecialidades: <b>' + esc(subespTxt(p)) + '</b>' : ''}. Definido pelo administrador.</p>`}
       <div class="field"><label for="pfT">Contacto profissional <span class="hint">(opcional, visível aos colegas pediatras)</span></label><input id="pfT" value="${esc(p.telefone_prof)}" maxlength="60"></div>
       <button class="btn">Guardar</button>
     </form>
@@ -1090,11 +1098,17 @@ async function adminUtilizadores(a) {
       <header><span class="avatar ${p.papel}">${esc(iniciais(p.nome))}</span>
         <div class="who2"><b>${esc(p.nome)}${eu ? ' <span class="muted small">(eu)</span>' : ''}</b><span class="small muted">${esc(p.email)}</span></div>
         <div class="badges">${estado}${p.is_admin ? '<span class="badge admin">Admin</span>' : ''}</div></header>
-      <div class="small meta2">${p.papel === 'mgf' ? 'MGF · ' + esc(unidadeTxt(p.unidades) || 'sem unidade') : 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '')} · registo ${fmtData(p.created_at)}</div>
+      <div class="small meta2">${p.papel === 'mgf' ? 'MGF · ' + esc(unidadeTxt(p.unidades) || 'sem unidade') : (p.pediatria_geral === false ? 'Subespecialista' : 'Pediatria geral') + (subespTxt(p) ? ' · ' + esc(subespTxt(p)) : '') + (p.servico ? ' · ' + esc(p.servico) : '')} · registo ${fmtData(p.created_at)}</div>
       <div class="ctrls">
         <select data-papel="${p.id}" ${eu ? 'disabled' : ''} aria-label="Perfil"><option value="mgf" ${p.papel === 'mgf' ? 'selected' : ''}>MGF</option><option value="pediatra" ${p.papel === 'pediatra' ? 'selected' : ''}>Pediatria</option></select>
         <label class="switch ${eu ? 'dis' : ''}"><input type="checkbox" data-admin="${p.id}" ${p.is_admin ? 'checked' : ''} ${eu ? 'disabled' : ''}><span></span> Administrador</label>
       </div>
+      ${p.papel === 'pediatra' ? `<div class="subesp">
+        <label class="switch"><input type="checkbox" data-geral="${p.id}" ${p.pediatria_geral !== false ? 'checked' : ''}><span></span> Pediatria geral (recebe casos novos)</label>
+        <details ${!p.pediatria_geral && !(p.subespecialidades || []).length ? 'open' : ''}><summary class="small">Subespecialidades: <b>${esc(subespTxt(p) || 'nenhuma')}</b></summary>
+          <div class="chips">${SUBESP.map(x => `<label><input type="checkbox" data-sub="${p.id}" value="${esc(x)}" ${(p.subespecialidades || []).includes(x) ? 'checked' : ''}> ${esc(x)}</label>`).join('')}</div>
+          <button class="btn small" data-gsub="${p.id}">Guardar subespecialidades</button></details>
+        ${p.pediatria_geral === false && !(p.subespecialidades || []).length ? '<div class="small" style="color:var(--urg)">Sem Pediatria geral nem subespecialidade: não recebe casos.</div>' : ''}</div>` : ''}
       ${!eu || !p.aprovado ? `<div class="actions">
         ${!p.aprovado ? `<button class="btn small" data-aprovar="${p.id}">Aprovar acesso</button>` : ''}
         ${!eu ? `<button class="btn secondary small" data-ativo="${p.id}" data-v="${!p.ativo}">${p.ativo ? 'Desativar' : 'Reativar'}</button>` : ''}</div>` : ''}
@@ -1110,6 +1124,8 @@ async function adminUtilizadores(a) {
   $$('[data-ativo]', a).forEach(b => b.onclick = () => upd(b.dataset.ativo, { ativo: b.dataset.v === 'true' }));
   $$('[data-papel]', a).forEach(s => s.onchange = () => upd(s.dataset.papel, { papel: s.value }));
   $$('[data-admin]', a).forEach(c => c.onchange = () => upd(c.dataset.admin, { is_admin: c.checked }));
+  $$('[data-geral]', a).forEach(c => c.onchange = () => upd(c.dataset.geral, { pediatria_geral: c.checked }));
+  $$('[data-gsub]', a).forEach(b => b.onclick = () => upd(b.dataset.gsub, { subespecialidades: $$(`[data-sub="${b.dataset.gsub}"]:checked`, a).map(x => x.value) }));
 }
 
 async function adminUnidades(a) {
@@ -1180,9 +1196,10 @@ async function adminEmails(a) {
 }
 
 async function adminEstatisticas(a) {
-  const [{ data, error }, { data: avs }] = await Promise.all([
+  const [{ data, error }, { data: avs }, { data: encs }] = await Promise.all([
     sb.from('casos').select('id, codigo, idade_valor, idade_unidade, sexo, estado, prioridade, desfecho, subespecialidade, created_at, primeira_resposta_em, fechado_em, unidades(nome, tipo, aces(nome))').order('created_at'),
     sb.from('avaliacoes').select('caso_id, utilidade, mudou_conduta, evitou_ref'),
+    sb.from('encaminhamentos').select('caso_id, area, created_at, respondido_em'),
   ]);
   if (error) throw error;
   const avMap = Object.fromEntries((avs || []).map(x => [x.caso_id, x]));
@@ -1214,6 +1231,13 @@ async function adminEstatisticas(a) {
         <div class="stat"><b>${pct(avaliados.filter(x => x.mudou_conduta).length, avaliados.length)}</b><span>Mudou a conduta do MGF</span></div>
         <div class="stat"><b>${pct(refDecid.filter(x => x.evitou_ref === 'sim').length, refDecid.length)}</b><span>Referenciação/urgência evitada*</span></div></div>
       <p class="small muted" style="margin:10px 0 0">* Entre os casos em que o MGF tencionava referenciar (exclui "não tencionava referenciar").</p></section>
+    <section class="card"><h2>Encaminhamentos para subespecialidade</h2>
+      <div class="stats" style="margin:0">
+        <div class="stat"><b>${pct(new Set((encs || []).map(e => e.caso_id)).size, data.length)}</b><span>Casos encaminhados (${new Set((encs || []).map(e => e.caso_id)).size})</span></div>
+        <div class="stat"><b>${fmtHoras(mediana((encs || []).filter(e => e.respondido_em).map(e => H(e.created_at, e.respondido_em))))}</b><span>Mediana até resposta do subespecialista</span></div></div>
+      <table class="table" style="margin-top:10px"><thead><tr><th>Subespecialidade</th><th style="text-align:right">Pedidos</th><th style="text-align:right">Respondidos</th><th style="text-align:right">Mediana</th></tr></thead><tbody>${
+        Object.entries(conta(encs || [], e => e.area)).sort((x, y) => y[1] - x[1]).map(([k, n]) => { const r = (encs || []).filter(e => e.area === k && e.respondido_em);
+          return `<tr><td>${esc(k)}</td><td style="text-align:right">${n}</td><td style="text-align:right">${r.length}</td><td style="text-align:right">${fmtHoras(mediana(r.map(e => H(e.created_at, e.respondido_em))))}</td></tr>`; }).join('') || '<tr><td colspan="4" class="muted">Sem encaminhamentos.</td></tr>'}</tbody></table></section>
     <section class="card"><h2>Exportar para Excel</h2>
       <p class="small muted">Ficheiro CSV <b>anónimo</b>, sem texto livre: código, datas, unidade, prioridade, idade, sexo, estado, subespecialidade, desfecho e tempos de resposta e avaliação do MGF. Abre diretamente no Excel.</p>
       <button class="btn" id="expCsv">Exportar ${data.length} caso(s)</button></section>
@@ -1222,7 +1246,6 @@ async function adminEstatisticas(a) {
       ${tabela('Por mês de submissão', conta(data, c => c.created_at.slice(0, 7)), {}, false)}
       ${tabela('Por desfecho', conta(comDesf, c => c.desfecho), DESFECHOS)}
       ${tabela('Por estado', conta(data, c => c.estado), ESTADOS)}
-      ${tabela('Por subespecialidade consultada', conta(data.filter(c => c.subespecialidade), c => c.subespecialidade))}
       ${tabela('Por ACES', conta(data, c => c.unidades?.aces?.nome))}
       ${tabela('Por unidade', conta(data, c => unidadeTxt(c.unidades)))}
       ${tabela('Por prioridade', conta(data, c => c.prioridade), PRIORIDADES)}
@@ -1239,6 +1262,7 @@ async function adminEstatisticas(a) {
       data_1a_resposta: dataPT(c.primeira_resposta_em), horas_ate_1a_resposta: num(h1),
       prazo_horas: PRAZO_H[c.prioridade], dentro_do_prazo: h1 == null ? (prazoCaso(c).atrasado ? 'não (pendente)' : 'pendente') : h1 <= PRAZO_H[c.prioridade] ? 'sim' : 'não',
       data_fecho: dataPT(c.fechado_em), dias_ate_fecho: c.fechado_em ? num(H(c.created_at, c.fechado_em) / 24) : '',
+      encaminhado_para: (encs || []).filter(e => e.caso_id === c.id).map(e => e.area).join(', '),
       mgf_utilidade: avMap[c.id]?.utilidade ?? '', mgf_mudou_conduta: avMap[c.id] ? (avMap[c.id].mudou_conduta ? 'sim' : 'não') : '',
       mgf_evitou_referenciacao: avMap[c.id] ? { sim: 'sim', nao: 'não', na: 'não tencionava' }[avMap[c.id].evitou_ref] : '',
     };
@@ -1440,8 +1464,8 @@ Médico de família (MGF)
 5. Se o pediatra pedir a identificação antes disso, envie o nº de utente por email institucional (@…min-saude.pt), indicando o código. Nunca na app.
 
 Pediatria hospitalar
-1. Veja os casos novos (notificação no telemóvel), use "Atribuir a mim" e responda dentro do prazo: urgente 48 horas, prioritário 7 dias, normal 30 dias.
-2. Pode discutir com subespecialidades usando notas internas (só visíveis à Pediatria).
+1. A Pediatria geral recebe os casos novos (notificação no telemóvel): use "Atribuir a mim" e responda dentro do prazo: urgente 48 horas, prioritário 7 dias, normal 30 dias.
+2. Se precisar de um subespecialista, use "Encaminhar para subespecialidade": escolha a área (e, se quiser, o colega) e escreva a pergunta. O subespecialista é notificado e passa a ser o responsável pelo caso: responde ao MGF e regista o desfecho. Sem colega escolhido, o primeiro subespecialista a responder fica responsável.
 3. Responda na app ou marque reunião (o convite de calendário leva apenas o código).
 4. Registe o desfecho. Se "Referenciar à consulta hospitalar", o pedido formal chega via CTH com o código PedLink no texto: associe-o ao caso pelo código.
 5. Se precisar de identificar o doente antes (ex.: consultar o processo hospitalar), peça na Conversa "envie-me a identificação do PL-…"; o MGF responde por email institucional.
@@ -1478,6 +1502,61 @@ async function vistaInstrucoes(v) {
   };
 }
 
+
+
+// ---------------------------------------------------------------------------
+// Encaminhamento para subespecialidade (Pediatria geral -> subespecialista)
+// ---------------------------------------------------------------------------
+function cartaoEncaminhamentos(c, encs, pediatras, gere) {
+  const eu = st.perfil;
+  const paraMim = encs.filter(e => !e.respondido_em && (e.para_id === eu.id || (!e.para_id && (eu.subespecialidades || []).includes(e.area))));
+  const item = (e) => `<li class="enc ${e.respondido_em ? 'ok' : 'pend'}">
+      <div class="enc-h"><b>${esc(e.area)}</b>${e.para ? ` · ${esc(e.para.nome)}` : ''}
+        <span class="badge ${e.respondido_em ? 'p-normal' : 'p-prioritario'}">${e.respondido_em ? 'Respondido' : 'Pendente'}</span></div>
+      <div class="enc-q">${esc(e.pergunta)}</div>
+      <div class="small muted">Encaminhado por ${esc(e.autor?.nome || 'colega')} em ${fmtDataHora(e.created_at)}${e.respondido_em ? ` · respondido por ${esc(e.resp?.nome || 'subespecialista')} em ${fmtDataHora(e.respondido_em)} (${fmtHoras((new Date(e.respondido_em) - new Date(e.created_at)) / 3600000)})` : ''}</div>
+      ${!e.respondido_em && e.criado_por === eu.id ? `<button type="button" class="linkbtn small" data-delenc="${e.id}">Cancelar encaminhamento</button>` : ''}</li>`;
+  return `<section class="card" id="encCard"><h2>Subespecialidades</h2>
+    ${paraMim.length ? `<div class="alert warn small"><b>Caso encaminhado para si (${esc(paraMim.map(e => e.area).join(', '))}).</b> ${c.pediatra_id === eu.id ? 'É agora o(a) responsável pelo caso' : 'Ao responder, passa a ser o(a) responsável pelo caso'}: responda ao MGF em <b>Gestão do caso</b> ou na <b>Conversa</b> e registe o desfecho. Use "Nota interna" para falar só com a Pediatria.</div>` : ''}
+    ${encs.length ? `<ul class="enclist">${encs.map(item).join('')}</ul>` : '<p class="muted small">Sem encaminhamentos. Se precisar do apoio de um subespecialista, encaminhe o caso.</p>'}
+    ${c.estado !== 'fechado' ? `<button type="button" class="btn secondary small" id="encAbrir">${icon('enviar')} Encaminhar para subespecialidade</button>
+    <form id="fenc" hidden style="margin-top:12px">
+      <div class="field"><label for="encA">Subespecialidade</label><select id="encA" required><option value="">—</option>${SUBESP.map(a => {
+        const n = pediatras.filter(p => (p.subespecialidades || []).includes(a)).length;
+        return `<option value="${esc(a)}">${esc(a)}${n ? ` (${n})` : ' (sem colegas registados)'}</option>`; }).join('')}</select></div>
+      <div class="field"><label for="encP">Colega <span class="hint">(opcional: sem escolha, todos os da subespecialidade são notificados e o primeiro a responder fica responsável)</span></label><select id="encP"><option value="">Todos da subespecialidade</option></select></div>
+      <div class="field"><div class="labelrow"><label for="encQ">Pergunta para o subespecialista</label>${botaoDitar('encQ')}</div><textarea id="encQ" rows="3" maxlength="4000" required placeholder="O que precisa que o subespecialista responda?"></textarea><div class="fielderr" id="encErr"></div></div>
+      <div class="actions"><button class="btn">Encaminhar</button><button type="button" class="btn secondary" id="encFechar">Cancelar</button></div>
+    </form>` : ''}
+  </section>`;
+}
+function ligarEncaminhamentos(v, c, pediatras) {
+  const f = $('#fenc', v);
+  $('#encAbrir', v)?.addEventListener('click', () => { f.hidden = false; $('#encAbrir', v).hidden = true; $('#encA', v).focus(); });
+  $('#encFechar', v)?.addEventListener('click', () => { pararDitado(); f.hidden = true; $('#encAbrir', v).hidden = false; });
+  $('#encA', v)?.addEventListener('change', () => {
+    const a = $('#encA', v).value;
+    $('#encP', v).innerHTML = '<option value="">Todos da subespecialidade</option>' + pediatras.filter(p => (p.subespecialidades || []).includes(a) && p.id !== st.perfil.id)
+      .map(p => `<option value="${p.id}">${esc(p.nome)}</option>`).join('');
+  });
+  if (f) f.onsubmit = async (e) => {
+    e.preventDefault(); pararDitado();
+    const q = $('#encQ', v).value.trim();
+    const b = verificarTexto(q).bloqueios;
+    if (b.length) { $('#encErr', v).textContent = 'Remova: ' + b.join(', ') + '.'; return; }
+    const area = $('#encA', v).value, para = $('#encP', v).value || null;
+    if (!para && !pediatras.some(p => (p.subespecialidades || []).includes(area)) && !confirm(`Ainda não há colegas de ${area} registados no PedLink. Encaminhar mesmo assim? (ninguém será notificado até um administrador associar um colega a esta subespecialidade)`)) return;
+    const { error } = await sb.from('encaminhamentos').insert({ caso_id: c.id, area, para_id: para, pergunta: q });
+    if (error) return toast(erroMsg(error), true);
+    toast(`Encaminhado para ${area}. ${para ? 'O colega foi notificado e passa a ser o responsável.' : 'Os colegas foram notificados; o primeiro a responder fica responsável.'}`); route();
+  };
+  $$('[data-delenc]', v).forEach(b => b.onclick = async () => {
+    if (!confirm('Cancelar este encaminhamento?')) return;
+    const { error } = await sb.from('encaminhamentos').delete().eq('id', b.dataset.delenc);
+    if (error) return toast(erroMsg(error), true);
+    toast('Encaminhamento cancelado.'); route();
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Avaliação da resposta pelo MGF (indicador principal de qualidade)
