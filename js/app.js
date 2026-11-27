@@ -66,6 +66,8 @@ function icon(name) {
     email: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     grafico: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     lixo: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+    copiar: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
     cadeado: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   }[name] || '';
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
@@ -456,6 +458,7 @@ function shell() {
       <nav class="nav">
         <a href="#/casos" data-r="casos">${icon('casos')} Casos</a>
         <a href="#/novo" data-r="novo">${icon('novo')} Novo caso</a>
+        <a href="#/instrucoes" data-r="instrucoes">${icon('info')} Como funciona</a>
         <a href="#/projeto" data-r="projeto">${icon('docs')} Projeto e critérios</a>
         <a href="#/privacidade" data-r="privacidade">${icon('escudo')} Privacidade e termos</a>
         <a href="#/notificacoes" data-r="notificacoes">${icon('sino')} Notificações <span class="count" id="nCount" hidden></span></a>
@@ -464,7 +467,7 @@ function shell() {
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
         <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 19</div></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 20</div></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
@@ -507,6 +510,7 @@ async function route() {
     else if (r === 'caso') await vistaCaso(v, id);
     else if (r === 'projeto') await vistaProjeto(v);
     else if (r === 'privacidade') await vistaPrivacidade(v);
+    else if (r === 'instrucoes') await vistaInstrucoes(v);
     else if (r === 'notificacoes') await vistaNotificacoes(v);
     else if (r === 'admin' && isAdmin()) await vistaAdmin(v, id || 'utilizadores');
     else if (r === 'perfil') await vistaPerfil(v);
@@ -756,6 +760,7 @@ async function vistaCaso(v, id) {
         <a class="btn secondary small" href="#/caso/${c.id}/editar">Editar</a>
         ${(meu && c.estado === 'novo') || isAdmin() ? '<button class="btn secondary small" id="apagar">Apagar</button>' : ''}</div>` : ''}
     </div>
+    ${cartaoCodigo(c, meu, ped)}
     <div class="cols">
       <div>
         <section class="card"><h2>Caso clínico</h2>
@@ -813,7 +818,8 @@ async function vistaCaso(v, id) {
               <div class="field"><label for="gReu">Reunião presencial</label><input id="gReu" type="datetime-local" value="${toLocalInput(c.reuniao_em)}"></div>
               <div class="field"><label for="gLoc">Local / ligação</label><input id="gLoc" maxlength="300" value="${esc(c.reuniao_local)}" placeholder="Sala, USF ou link Teams"></div>
             </div>
-            <div class="field"><label for="gDes">Desfecho</label><select id="gDes"><option value="">— (em aberto)</option>${Object.entries(DESFECHOS).map(([k, t]) => `<option value="${k}" ${c.desfecho === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+            <div class="field"><label for="gDes">Desfecho</label><select id="gDes"><option value="">— (em aberto)</option>${Object.entries(DESFECHOS).map(([k, t]) => `<option value="${k}" ${c.desfecho === k ? 'selected' : ''}>${t}</option>`).join('')}</select>
+              <div class="alert info small" id="gDesRef" hidden style="margin-top:8px">O MGF fará a referenciação formal via <b>CTH</b> indicando o código <b>${esc(c.codigo)}</b>. Associe o pedido a este caso pelo código.</div></div>
             <div class="field"><label for="gDesN">Nota do desfecho <span class="hint">(ex.: consulta de Cardiologia Pediátrica, prioridade)</span></label><input id="gDesN" maxlength="500" value="${esc(c.desfecho_nota)}"></div>
             <button class="btn">Guardar</button>
           </form></section>` : ''}
@@ -846,7 +852,10 @@ async function vistaCaso(v, id) {
     route();
   };
 
+  $$('[data-copiar]', v).forEach(b => b.onclick = () => copiarTexto(b.dataset.copiar, b));
   if (ped) {
+    const avisoRef = () => { $('#gDesRef').hidden = !['referenciar'].includes($('#gDes').value); };
+    $('#gDes').addEventListener('change', avisoRef); avisoRef();
     $('#gMim')?.addEventListener('click', () => { $('#gPed').value = st.perfil.id; if ($('#gEst').value === 'novo') $('#gEst').value = 'em_analise'; });
     $('#gReu').addEventListener('change', () => { if ($('#gReu').value && !['fechado'].includes($('#gEst').value)) $('#gEst').value = 'reuniao_agendada'; });
     $('#gDes').addEventListener('change', () => { if ($('#gDes').value) $('#gEst').value = 'fechado'; });
@@ -1362,6 +1371,89 @@ async function exportarCSV(linhas, nome) {
   }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nome;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+
+
+// ---------------------------------------------------------------------------
+// Código do caso: ponte entre o PedLink (anónimo) e o processo clínico oficial
+// ---------------------------------------------------------------------------
+function textoProcesso(c) { return `Caso discutido com a Pediatria hospitalar através do PedLink — código ${c.codigo}.`; }
+async function copiarTexto(txt, btn) {
+  let ok = false;
+  try { await navigator.clipboard.writeText(txt); ok = true; } catch {
+    const ta = document.createElement('textarea'); ta.value = txt; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); try { ok = document.execCommand('copy'); } catch { /* ignore */ } ta.remove();
+  }
+  if (ok && btn) { const t = btn.innerHTML; btn.innerHTML = '✓ Copiado'; setTimeout(() => { btn.innerHTML = t; }, 1800); }
+  toast(ok ? 'Copiado. Cole no registo da consulta do doente.' : 'Não foi possível copiar: selecione o texto e copie manualmente.', !ok);
+}
+function cartaoCodigo(c, meu, ped) {
+  const ref = c.desfecho === 'referenciar';
+  if (meu) {
+    const recente = Date.now() - new Date(c.created_at) < 72 * 3600000;
+    return `<section class="card codigo ${recente || ref ? 'destaque' : ''}">
+      <div class="cod-top"><div><span class="muted small">Código do caso</span><div class="cod">${esc(c.codigo)}</div></div>
+        <button class="btn ${recente ? '' : 'secondary'} small" data-copiar="${esc(textoProcesso(c))}">${icon('copiar')} Copiar para o processo</button></div>
+      <p class="small" style="margin:8px 0 0">Cole este texto no <b>registo da consulta no processo clínico do doente</b> (SClínico/MIM@UF): <i>"${esc(textoProcesso(c))}"</i> É assim que o caso fica ligado ao doente, sem identificação na app.</p>
+      ${ref ? `<div class="alert warn small" style="margin:10px 0 0"><b>Desfecho: referenciar.</b> Faça a referenciação formal pelo circuito habitual (<b>CTH</b>) e escreva o código <b>${esc(c.codigo)}</b> no texto do pedido.
+        <button class="btn secondary small" style="margin-top:6px" data-copiar="Referenciação na sequência de discussão PedLink — código ${esc(c.codigo)}.">${icon('copiar')} Copiar texto para a CTH</button></div>` : ''}
+    </section>`;
+  }
+  if (ped) {
+    return `<div class="codline small"><span>Código: <b>${esc(c.codigo)}</b></span>
+      <button class="btn secondary small" data-copiar="${esc(c.codigo)}">${icon('copiar')} Copiar</button>
+      <span class="muted">Precisa de identificar o doente? Peça na Conversa: "envie-me a identificação do ${esc(c.codigo)} por email institucional".</span></div>`;
+  }
+  return '';
+}
+
+const INSTRUCOES_PADRAO = `O código do caso
+Cada caso recebe automaticamente um código único, sequencial por ordem de entrada: PL-2026-0001, PL-2026-0002, … Este código é a única ligação entre o PedLink e o doente. A identificação (nome, nº de utente, processo) nunca entra na app.
+
+Médico de família (MGF)
+1. Crie o caso em "Novo caso" com dados clínicos anonimizados: idade (até aos 3 anos, em meses), sexo, história, exame objetivo, exames e uma pergunta concreta.
+2. Depois de submeter, toque em "Copiar para o processo" e cole o texto no registo da consulta no processo clínico do doente (SClínico/MIM@UF). Assim sabe sempre a que doente corresponde cada código.
+3. Acompanhe a resposta na app (recebe notificação). Use a Conversa para esclarecer dúvidas, sempre sem identificar o doente.
+4. Se a Pediatria indicar "Referenciar": faça a referenciação formal pelo circuito habitual (CTH) e escreva o código PedLink no texto do pedido (há um botão para copiar).
+5. Se o pediatra pedir a identificação antes disso, envie o nº de utente por email institucional (@…min-saude.pt), indicando o código. Nunca na app.
+
+Pediatria hospitalar
+1. Veja os casos novos (notificação no telemóvel), use "Atribuir a mim" e responda dentro do prazo: urgente 48 horas, prioritário 7 dias, normal 30 dias.
+2. Pode discutir com subespecialidades usando notas internas (só visíveis à Pediatria).
+3. Responda na app ou marque reunião (o convite de calendário leva apenas o código).
+4. Registe o desfecho. Se "Referenciar à consulta hospitalar", o pedido formal chega via CTH com o código PedLink no texto: associe-o ao caso pelo código.
+5. Se precisar de identificar o doente antes (ex.: consultar o processo hospitalar), peça na Conversa "envie-me a identificação do PL-…"; o MGF responde por email institucional.
+
+Regras essenciais
+• Nunca escreva nome, nº de utente, NIF, nº de processo, data de nascimento completa, morada, escola ou contactos: nem nos campos, nem nas mensagens, nem no ditado, nem nas imagens.
+• Situações emergentes seguem para o Serviço de Urgência, não para a app.
+• O PedLink não substitui o registo no processo clínico nem a referenciação formal.`;
+
+async function vistaInstrucoes(v) {
+  const { data } = await sb.from('conteudos').select('titulo, corpo').eq('chave', 'instrucoes').maybeSingle();
+  const t = data || { titulo: 'Como funciona o PedLink', corpo: INSTRUCOES_PADRAO };
+  const html = esc(t.corpo).split(/\n{2,}/).map(bloco => {
+    const [primeira, ...resto] = bloco.split('\n');
+    return resto.length && !/^[\d•]/.test(primeira) ? `<h2>${primeira}</h2><div class="prose">${resto.join('\n')}</div>` : `<div class="prose">${bloco}</div>`;
+  }).join('');
+  v.innerHTML = `<h1>${esc(t.titulo)}</h1>
+    <div class="alert info small">${icon('info')} Resumo: <b>o código do caso (PL-…) é a ponte</b>. Fica no processo clínico oficial do doente e na referenciação CTH; a app só tem dados anonimizados.</div>
+    <section class="card instr" id="inTxt">${html}</section>
+    ${isAdmin() ? `<div class="actions"><button class="btn secondary small" id="editIn">Editar instruções</button></div>` : ''}`;
+  if (!isAdmin()) return;
+  $('#editIn').onclick = () => {
+    $('#inTxt').outerHTML = `<form id="fin" class="card"><div class="field"><input id="inT" value="${esc(t.titulo)}" maxlength="200"></div>
+      <div class="field"><textarea id="inB" rows="24">${esc(t.corpo)}</textarea></div>
+      <p class="small muted">Linha em branco separa secções; a primeira linha de cada secção é o título.</p>
+      <div class="actions"><button class="btn">Guardar</button></div></form>`;
+    $('#editIn').remove();
+    $('#fin').onsubmit = async (e) => {
+      e.preventDefault();
+      const { error } = await sb.from('conteudos').upsert({ chave: 'instrucoes', titulo: $('#inT').value.trim(), corpo: $('#inB').value, updated_at: new Date().toISOString() });
+      if (error) return toast(erroMsg(error), true);
+      toast('Instruções atualizadas.'); route();
+    };
+  };
 }
 
 // ---------------------------------------------------------------------------

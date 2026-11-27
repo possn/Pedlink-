@@ -245,3 +245,10 @@ h2.sec { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 
 .switch input:checked + span { background: var(--brand); }
 .switch input:checked + span::after { transform: translateX(16px); }
 .switch.dis { opacity: .55; cursor: default; }
+
+/* código do caso */
+.card.codigo .cod-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.card.codigo .cod { font-size: 1.5rem; font-weight: 800; letter-spacing: .02em; font-variant-numeric: tabular-nums; color: var(--brand); }
+.card.codigo.destaque { border: 2px solid var(--brand); background: var(--brand-soft); }
+.codline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: -4px 0 14px; }
+.instr h2 { margin-top: 18px; } .instr h2:first-child { margin-top: 0; }
