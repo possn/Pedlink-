@@ -464,7 +464,7 @@ function shell() {
         <a href="#/perfil" data-r="perfil">${icon('perfil')} O meu perfil</a>
         <a href="#" id="sairNav">${icon('sair')} Sair</a>
       </nav>
-      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 18</div></div>
+      <div class="who"><b>${esc(p.nome)}</b><br><span class="muted">${isPed() ? 'Pediatria' + (p.servico ? ' · ' + esc(p.servico) : '') : esc(unidadeTxt(p.unidades))}${p.is_admin ? ' · admin' : ''}</span><div class="muted" style="font-size:.72rem;margin-top:4px">versão 19</div></div>
     </aside>
     <div>
       <header class="topbar"><button class="iconbtn" id="menuBtn" aria-label="Abrir menu">${icon('menu')}</button>
@@ -623,13 +623,14 @@ async function vistaFormCaso(v, id) {
   v.innerHTML = `
     <a href="${id ? '#/caso/' + id : '#/casos'}" class="muted small" style="text-decoration:none">${icon('voltar')} Voltar</a>
     <h1>${id ? 'Editar caso ' + esc(c.codigo) : 'Novo caso para discussão'}</h1>
-    <div class="alert warn">${icon('cadeado')} <b>Não identifique o doente.</b> Não escreva nome, número de utente, NIF, número de processo, data de nascimento completa, morada, escola ou contactos. Use a idade e descreva só o clinicamente relevante.</div>
+    <div class="alert warn">${icon('cadeado')} <b>Não identifique o doente.</b> Não escreva nome, número de utente, NIF, número de processo, data de nascimento completa, morada, escola ou contactos. Use a idade e descreva só o clinicamente relevante.<br><b>Até aos 3 anos, indique a idade exata em meses</b> (ex.: 18 meses, não "1 ano"); no 1.º mês, em dias ou semanas.</div>
     <form id="fc" class="card" novalidate>
       <h2>Identificação mínima</h2>
       <div class="grid2">
         <div class="field"><label for="c_idade">Idade</label>
           <div class="row" style="gap:8px"><input id="c_idade" type="number" min="0" max="216" required value="${esc(c.idade_valor)}" style="flex:1 1 80px">
-          <select id="c_idade_u" style="flex:1 1 110px">${['dias', 'semanas', 'meses', 'anos'].map(u => `<option ${c.idade_unidade === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div></div>
+          <select id="c_idade_u" style="flex:1 1 110px">${['dias', 'semanas', 'meses', 'anos'].map(u => `<option ${c.idade_unidade === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+          <div class="fielderr" id="idadeAviso" hidden>Abaixo dos 3 anos indique a idade em meses (ex.: 2 anos e 4 meses = 28 meses).</div></div>
         <div class="field"><label>Sexo</label><div class="seg">
           ${['F', 'M', 'Indeterminado'].map(s => `<label><input type="radio" name="sexo" value="${s}" ${c.sexo === s ? 'checked' : ''} required> ${sexoTxt(s)}</label>`).join('')}</div></div>
       </div>
@@ -671,6 +672,8 @@ async function vistaFormCaso(v, id) {
   };
   campos.forEach(k => $(`#c_${k}`).addEventListener('input', validar));
   ligarDitado(v);
+  const verIdade = () => { const n = Number($('#c_idade').value); $('#idadeAviso').hidden = !($('#c_idade_u').value === 'anos' && $('#c_idade').value !== '' && n < 3); };
+  $('#c_idade').addEventListener('input', verIdade); $('#c_idade_u').addEventListener('change', verIdade); verIdade();
   validar();
 
   $('#fc').onsubmit = async (e) => {
